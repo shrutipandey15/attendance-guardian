@@ -12,18 +12,22 @@ export default async ({ req, res, log, error }) => {
 
   try {
     const payload = JSON.parse(req.body);
-    const { userId, signature, dataToVerify, email } = payload;
+    const { userId, signature, dataToVerify, email, action } = payload;
 
-    if (!userId || !signature || !dataToVerify) {
-      return res.json({ success: false, message: "❌ Missing ID or Signature" });
+    if (!userId || !signature || !dataToVerify || !action) {
+      return res.json({ success: false, message: "❌ Missing ID, Signature, or Action" });
     }
 
-    log(`🔒 Processing check-in for: ${email}`);
+    if (action !== 'check-in' && action !== 'check-out') {
+      return res.json({ success: false, message: "❌ Invalid Action" });
+    }
+
+    log(`🔒 Processing '${action}' for: ${email}`);
 
     const employeeDocs = await databases.listDocuments(
       DB_ID,
       'employees',
-      [Query.equal('email', email)]
+      [Query.equal('email', payload.email)]
     );
 
     if (employeeDocs.total === 0) {
@@ -63,7 +67,7 @@ export default async ({ req, res, log, error }) => {
         {
           timestamp: new Date().toISOString(),
           actorId: userProfile.$id,
-          action: "check-in",
+          action: action,
           payload: auditDetails,
           hash: secureHash
         }
@@ -71,7 +75,7 @@ export default async ({ req, res, log, error }) => {
 
       return res.json({ 
         success: true, 
-        message: "✅ Attendance Verified & Recorded!" 
+        message: `✅ Successfully Recorded: ${action.toUpperCase()}` 
       });
 
     } else {
