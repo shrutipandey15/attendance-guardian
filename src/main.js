@@ -173,7 +173,7 @@ export default async ({ req, res, log, error }) => {
     const callerId = req.headers['x-appwrite-user-id']; 
 
     if (action === 'get_payroll_report') {
-        await checkAdmin(callerId);
+        await checkAdmin(callerId); 
         
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
@@ -203,7 +203,7 @@ export default async ({ req, res, log, error }) => {
     }
 
     if (action === 'create_employee') {
-        await checkAdmin(callerId);
+        await checkAdmin(callerId); 
 
         const { email, password, name, salary } = payload.data || {};
 
@@ -246,6 +246,9 @@ export default async ({ req, res, log, error }) => {
         if (employeeDocs.total === 0) return res.json({ success: false, message: "❌ User not found" });
         
         const userProfile = employeeDocs.documents[0];
+        
+        const userAgent = userProfile.deviceFingerprint || 'Device Not Bound/Logged';
+        
         if (!userProfile.devicePublicKey) return res.json({ success: false, message: "❌ Device not registered" });
 
         const publicKey = forge.pki.publicKeyFromPem(userProfile.devicePublicKey);
@@ -254,10 +257,6 @@ export default async ({ req, res, log, error }) => {
         const isVerified = publicKey.verify(md.digest().bytes(), forge.util.decode64(signature));
 
         if (isVerified) {
-            log("--- ATTENDANCE DEBUG: RAW HEADERS ---");
-            log(JSON.stringify(req.headers)); 
-            log("--- END RAW HEADERS ---");
-            const userAgent = req.headers['user-agent'] || req.headers['User-Agent'] || 'UNKNOWN_HEADER_MISSING';
              const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
                 role: userProfile.role || 'employee',
