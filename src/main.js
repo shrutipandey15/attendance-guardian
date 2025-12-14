@@ -36,10 +36,9 @@ export default async ({ req, res, log, error }) => {
                 {
                     name: name,
                     email: email,
-                    salaryMonthly: parseFloat(salary),
-                    devicePublicKey: null,
-                    deviceFingerprint: null,
-                    role: 'employee'
+                    role: 'employee',                
+                    salaryMonthly: parseInt(salary), 
+                    joinDate: new Date().toISOString() 
                 }
             );
 
