@@ -12,18 +12,18 @@ export default async ({ req, res, log, error }) => {
 
   try {
     const payload = JSON.parse(req.body);
-    const { userId, signature, dataToVerify } = payload;
+    const { userId, signature, dataToVerify, email } = payload;
 
     if (!userId || !signature || !dataToVerify) {
       return res.json({ success: false, message: "❌ Missing ID or Signature" });
     }
 
-    log(`🔒 Verifying check-in for User: ${userId}`);
+    log(`🔒 Processing check-in for: ${email}`);
 
     const employeeDocs = await databases.listDocuments(
       DB_ID,
       'employees',
-      [Query.equal('email', payload.email)]
+      [Query.equal('email', email)]
     );
 
     if (employeeDocs.total === 0) {
@@ -45,29 +45,27 @@ export default async ({ req, res, log, error }) => {
 
     if (isVerified) {
       log("✅ Signature Valid!");
-      const timestamp = new Date().toISOString();
-      const auditPayload = JSON.stringify({
-         signatureVerified: true,
-         signedData: dataToVerify,
-         device: req.headers['user-agent']
+      const auditDetails = JSON.stringify({
+         employeeName: userProfile.name,
+         role: userProfile.role,
+         device: req.headers['user-agent'] || 'unknown',
+         status: 'verified',
+         signedData: dataToVerify
       });
       const hashMd = forge.md.sha256.create();
-      hashMd.update(auditPayload);
-      const currentHash = hashMd.digest().toHex();
+      hashMd.update(auditDetails);
+      const secureHash = hashMd.digest().toHex();
 
       await databases.createDocument(
         DB_ID,
         'audit',
         'unique()',
         {
-          actorId: userProfile.$id, 
-          action: "check-in",           
-          payload: auditPayload,
-          hash: currentHash,            
-          timestamp: timestamp,          
-          employeeName: userProfile.name,
-          status: 'verified',          
-          deviceFingerprint: req.headers['user-agent'] || 'unknown'
+          timestamp: new Date().toISOString(),
+          actorId: userProfile.$id,
+          action: "check-in",
+          payload: auditDetails,
+          hash: secureHash
         }
       );
 
