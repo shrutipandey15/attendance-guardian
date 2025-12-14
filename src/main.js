@@ -11,7 +11,7 @@ export default async ({ req, res, log, error }) => {
   const users = new Users(client);
   const teams = new Teams(client);
   
-  const DB_ID = '693d2c7a002d224e1d81';
+  const DB_ID = process.env.APPWRITE_DB_ID;
   const ADMIN_TEAM_ID = process.env.APPWRITE_ADMIN_TEAM_ID;
 
   try {
