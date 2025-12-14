@@ -38,7 +38,8 @@ export default async ({ req, res, log, error }) => {
                     email: email,
                     salaryMonthly: parseFloat(salary),
                     devicePublicKey: null,
-                    deviceFingerprint: null
+                    deviceFingerprint: null,
+                    role: 'employee'
                 }
             );
 
@@ -78,6 +79,7 @@ export default async ({ req, res, log, error }) => {
         if (isVerified) {
             const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
+                role: userProfile.role || 'employee',
                 device: req.headers['user-agent'] || 'unknown',
                 status: 'verified',
                 signedData: dataToVerify
