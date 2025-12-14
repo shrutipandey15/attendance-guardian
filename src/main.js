@@ -55,6 +55,7 @@ export default async ({ req, res, log, error }) => {
         {
           actorId: userProfile.$id,
           employeeName: userProfile.name,
+          action: "check-in",
           timestamp: new Date().toISOString(),
           status: 'verified',
           deviceFingerprint: req.headers['user-agent'] || 'unknown'
