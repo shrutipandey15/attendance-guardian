@@ -254,6 +254,9 @@ export default async ({ req, res, log, error }) => {
         const isVerified = publicKey.verify(md.digest().bytes(), forge.util.decode64(signature));
 
         if (isVerified) {
+            log("--- ATTENDANCE DEBUG: RAW HEADERS ---");
+            log(JSON.stringify(req.headers)); 
+            log("--- END RAW HEADERS ---");
             const userAgent = req.headers['user-agent'] || req.headers['User-Agent'] || 'UNKNOWN_HEADER_MISSING';
              const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
