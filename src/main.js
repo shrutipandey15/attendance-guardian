@@ -53,7 +53,7 @@ export default async ({ req, res, log, error }) => {
         'audit',
         'unique()',
         {
-          employeeId: userProfile.$id,
+          actorId: userProfile.$id,
           employeeName: userProfile.name,
           timestamp: new Date().toISOString(),
           status: 'verified',
