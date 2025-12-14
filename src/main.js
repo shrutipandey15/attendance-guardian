@@ -18,9 +18,20 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
     let present = 0, absent = 0, half = 0, hol = 0, lev = 0;
       
     const joinDate = new Date(emp.joinDate);
-    joinDate.setHours(0, 0, 0, 0); 
+    joinDate.setHours(0, 0, 0, 0);
+    let totalScheduledWorkDays = 0; 
+    for (let d = 1; d <= daysInMonth; d++) {
+        const date = new Date(today.getFullYear(), today.getMonth(), d);
+        if (date < joinDate) continue; 
+        
+        const dateStr = date.toISOString().split("T")[0];
+        const isSun = date.getDay() === 0;
+        const holiday = holidays.find((h) => h.date === dateStr);
 
-    let effectiveWorkDays = 0;
+        if (!isSun && !holiday) {
+            totalScheduledWorkDays++;
+        }
+    }
 
     const empLogs = allLogs.filter((l) => l.actorId === emp.$id);
     const empLeaves = leaves.filter((l) => l.employeeId === emp.$id);
@@ -44,11 +55,7 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
         });
         continue;
       }
-      
-      if (!isSun && !holiday) {
-          effectiveWorkDays++;
-      }
-      
+            
       const logs = empLogs
         .filter((l) => l.timestamp.startsWith(dateStr))
         .sort(
@@ -82,12 +89,16 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
             ot = dur;
             notes = isSun ? "Sunday OT" : `Holiday Work`;
           } else {
-            if (dur > 0 && dur < 4) {
+            if (dur >= 8) {
+              status = "Present";
+              present++;
+            } else if (dur >= 4 && dur < 8) {
               status = "Half-Day";
               half++;
             } else {
-              status = "Present";
-              present++;
+              status = "Absent";
+              absent++;
+              notes = "Insufficient Hours (< 4h)";
             }
             if (dur > 10) ot = dur - 10;
           }
@@ -96,7 +107,9 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
           dur = 0;
           
           if (isSun || holiday) {
-             notes = notes ? `${notes} (Missed Check-out)` : "Missed Check-out";
+             status = "Present"; 
+             present++;
+             notes = notes ? `${notes} (Missed Check-out, 0h duration)` : "Missed Check-out (0h duration)";
           } else {
              status = "Absent";
              absent++;
@@ -121,11 +134,10 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
       });
     }
     
-    const rate = effectiveWorkDays > 0 ? emp.salaryMonthly / effectiveWorkDays : 0;
+    const rate = totalScheduledWorkDays > 0 ? emp.salaryMonthly / totalScheduledWorkDays : 0;
     const totalPaidDays = present + lev + hol + (half * 0.5);
     const net = rate * totalPaidDays;
-    
-    const finalAbsentDays = effectiveWorkDays - totalPaidDays;
+    const finalAbsentDaysReport = absent;
 
     return {
       employeeId: emp.$id,
@@ -133,7 +145,7 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
       month: today.toLocaleDateString("en-US", { month: "long" }),
       netSalary: net.toLocaleString("en-IN", { maximumFractionDigits: 2 }),
       presentDays: present,
-      absentDays: Math.max(0, finalAbsentDays), 
+      absentDays: finalAbsentDaysReport, 
       holidayDays: hol,
       paidLeaveDays: lev,
       halfDays: half,
