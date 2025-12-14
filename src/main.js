@@ -1,4 +1,4 @@
-import { Client, Databases, Users, Query, ID } from 'node-appwrite';
+import { Client, Databases, Users, Teams, Query, ID } from 'node-appwrite';
 import forge from 'node-forge';
 
 export default async ({ req, res, log, error }) => {
@@ -9,7 +9,10 @@ export default async ({ req, res, log, error }) => {
 
   const databases = new Databases(client);
   const users = new Users(client);
+  const teams = new Teams(client);
+  
   const DB_ID = '693d2c7a002d224e1d81';
+  const ADMIN_TEAM_ID = process.env.APPWRITE_ADMIN_TEAM_ID;
 
   try {
     let payload = {};
@@ -19,9 +22,33 @@ export default async ({ req, res, log, error }) => {
     const action = payload.action;
 
     if (action === 'create_employee') {
+        const callerId = req.headers['x-appwrite-user-id'];
+
+        if (!callerId) {
+            return res.json({ success: false, message: "⛔ Unauthorized: Missing User ID" });
+        }
+
+        try {
+            if (!ADMIN_TEAM_ID) {
+                throw new Error("Admin Team ID not configured on server.");
+            }
+
+            const membershipCheck = await teams.listMemberships(
+                ADMIN_TEAM_ID,
+                [Query.equal('userId', callerId)]
+            );
+
+            if (membershipCheck.total === 0) {
+                return res.json({ success: false, message: "⛔ Unauthorized: You are not an Admin." });
+            }
+        } catch (err) {
+            error("Auth Check Failed: " + err.message);
+            return res.json({ success: false, message: "⛔ Authorization Error" });
+        }
+
         const { email, password, name, salary } = payload.data || {};
 
-        if (!email || !password || !name || !salary) {
+        if (!email || !password || !name) {
             return res.json({ success: false, message: "❌ Missing details" });
         }
 
@@ -37,7 +64,7 @@ export default async ({ req, res, log, error }) => {
                     name: name,
                     email: email,
                     role: 'employee',                
-                    salaryMonthly: parseInt(salary), 
+                    salaryMonthly: parseInt(salary) || 0,
                     joinDate: new Date().toISOString() 
                 }
             );
@@ -46,9 +73,7 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: true, userId: newUser.$id });
 
         } catch (err) {
-            if (newUser) {
-                await users.delete(newUser.$id);
-            }
+            if (newUser) await users.delete(newUser.$id).catch(() => {}); 
             error("Creation Failed: " + err.message);
             return res.json({ success: false, error: err.message });
         }
@@ -81,7 +106,7 @@ export default async ({ req, res, log, error }) => {
             const hashMd = forge.md.sha256.create();
             hashMd.update(auditDetails);
 
-            await databases.createDocument(DB_ID, 'audit', 'unique()', {
+            await databases.createDocument(DB_ID, 'audit', ID.unique(), {
                 timestamp: new Date().toISOString(),
                 actorId: userProfile.$id,
                 action: action,
