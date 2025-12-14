@@ -14,9 +14,7 @@ export default async ({ req, res, log, error }) => {
   try {
     let payload = {};
     if (req.body) {
-        try {
-            payload = JSON.parse(req.body);
-        } catch (e) { payload = req.body; }
+        try { payload = JSON.parse(req.body); } catch (e) { payload = req.body; }
     }
     const action = payload.action;
 
@@ -27,8 +25,10 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: false, message: "❌ Missing details" });
         }
 
+        let newUser;
         try {
-            const newUser = await users.create(ID.unique(), email, null, password, name);
+            newUser = await users.create(ID.unique(), email, null, password, name);
+            
             await databases.createDocument(
                 DB_ID,
                 'employees',
@@ -47,6 +47,9 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: true, userId: newUser.$id });
 
         } catch (err) {
+            if (newUser) {
+                await users.delete(newUser.$id);
+            }
             error("Creation Failed: " + err.message);
             return res.json({ success: false, error: err.message });
         }
@@ -54,30 +57,22 @@ export default async ({ req, res, log, error }) => {
 
     if (action === 'check-in' || action === 'check-out') {
         const { userId, signature, dataToVerify, email } = payload;
+        
+        if (!userId || !signature) return res.json({ success: false, message: "❌ Missing signature" });
 
-        if (!userId || !signature || !dataToVerify) {
-            return res.json({ success: false, message: "❌ Missing signature data" });
-        }
-
-        const employeeDocs = await databases.listDocuments(
-            DB_ID, 'employees', [Query.equal('email', email)]
-        );
-
+        const employeeDocs = await databases.listDocuments(DB_ID, 'employees', [Query.equal('email', email)]);
         if (employeeDocs.total === 0) return res.json({ success: false, message: "❌ User not found" });
-
+        
         const userProfile = employeeDocs.documents[0];
-        const storedPublicKeyPem = userProfile.devicePublicKey;
+        if (!userProfile.devicePublicKey) return res.json({ success: false, message: "❌ Device not registered" });
 
-        if (!storedPublicKeyPem) return res.json({ success: false, message: "❌ Device not registered" });
-
-        const publicKey = forge.pki.publicKeyFromPem(storedPublicKeyPem);
+        const publicKey = forge.pki.publicKeyFromPem(userProfile.devicePublicKey);
         const md = forge.md.sha256.create();
         md.update(dataToVerify, 'utf8');
-        const signatureBytes = forge.util.decode64(signature);
-        const isVerified = publicKey.verify(md.digest().bytes(), signatureBytes);
+        const isVerified = publicKey.verify(md.digest().bytes(), forge.util.decode64(signature));
 
         if (isVerified) {
-            const auditDetails = JSON.stringify({
+             const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
                 role: userProfile.role || 'employee',
                 device: req.headers['user-agent'] || 'unknown',
@@ -87,16 +82,13 @@ export default async ({ req, res, log, error }) => {
             const hashMd = forge.md.sha256.create();
             hashMd.update(auditDetails);
 
-            await databases.createDocument(
-                DB_ID, 'audit', 'unique()',
-                {
-                    timestamp: new Date().toISOString(),
-                    actorId: userProfile.$id,
-                    action: action,
-                    payload: auditDetails,
-                    hash: hashMd.digest().toHex()
-                }
-            );
+            await databases.createDocument(DB_ID, 'audit', 'unique()', {
+                timestamp: new Date().toISOString(),
+                actorId: userProfile.$id,
+                action: action,
+                payload: auditDetails,
+                hash: hashMd.digest().toHex()
+            });
             return res.json({ success: true, message: `✅ Recorded: ${action}` });
         } else {
             return res.json({ success: false, message: "⛔ Invalid Signature" });
