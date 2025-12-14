@@ -1,6 +1,12 @@
 import { Client, Databases, Users, Teams, Query, ID } from 'node-appwrite';
 import forge from 'node-forge';
 
+let payrollCache = {
+    data: null,
+    timestamp: 0,
+    TTL_MS: 300000
+};
+
 const calculatePayroll = (emp, allLogs, holidays, leaves) => {
     const today = new Date();
     const daysInMonth = new Date(
@@ -174,6 +180,12 @@ export default async ({ req, res, log, error }) => {
 
     if (action === 'get_payroll_report') {
         await checkAdmin(callerId); 
+
+        const now = Date.now();
+        if (payrollCache.data && (now - payrollCache.timestamp < payrollCache.TTL_MS)) {
+            log("Serving payroll report from cache.");
+            return res.json({ success: true, reports: payrollCache.data });
+        }
         
         const today = new Date();
         const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
@@ -199,12 +211,14 @@ export default async ({ req, res, log, error }) => {
             )
         );
 
+        payrollCache.data = allReports;
+        payrollCache.timestamp = now;
+
         return res.json({ success: true, reports: allReports });
     }
 
     if (action === 'create_employee') {
         await checkAdmin(callerId); 
-
         const { email, password, name, salary } = payload.data || {};
 
         if (!email || !password || !name) {
@@ -227,6 +241,8 @@ export default async ({ req, res, log, error }) => {
                     joinDate: new Date().toISOString() 
                 }
             );
+            
+            payrollCache.data = null; 
 
             log(`✅ Created Employee: ${name}`);
             return res.json({ success: true, userId: newUser.$id });
@@ -274,6 +290,8 @@ export default async ({ req, res, log, error }) => {
                 payload: auditDetails,
                 hash: hashMd.digest().toHex()
             });
+            payrollCache.data = null; 
+            
             return res.json({ success: true, message: `✅ Recorded: ${action}` });
         } else {
             return res.json({ success: false, message: "⛔ Invalid Signature" });
