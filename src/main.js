@@ -254,10 +254,11 @@ export default async ({ req, res, log, error }) => {
         const isVerified = publicKey.verify(md.digest().bytes(), forge.util.decode64(signature));
 
         if (isVerified) {
+            const userAgent = req.headers['user-agent'] || req.headers['User-Agent'] || 'UNKNOWN_HEADER_MISSING';
              const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
                 role: userProfile.role || 'employee',
-                device: req.headers['user-agent'] || 'unknown',
+                device: userAgent,
                 status: 'verified',
                 signedData: dataToVerify
             });
