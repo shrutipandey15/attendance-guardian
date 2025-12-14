@@ -1,5 +1,5 @@
-const { Client, Databases, Users, Query, ID } = require('node-appwrite');
-const forge = require('node-forge');
+import { Client, Databases, Users, Query, ID } from 'node-appwrite';
+import forge from 'node-forge';
 
 export default async ({ req, res, log, error }) => {
   const client = new Client()
@@ -24,7 +24,7 @@ export default async ({ req, res, log, error }) => {
         const { email, password, name, salary } = payload.data || {};
 
         if (!email || !password || !name || !salary) {
-            return res.json({ success: false, message: "❌ Missing details for employee creation" });
+            return res.json({ success: false, message: "❌ Missing details" });
         }
 
         try {
@@ -42,7 +42,7 @@ export default async ({ req, res, log, error }) => {
                 }
             );
 
-            log(`✅ Created Employee: ${name} (${email})`);
+            log(`✅ Created Employee: ${name}`);
             return res.json({ success: true, userId: newUser.$id });
 
         } catch (err) {
@@ -55,26 +55,19 @@ export default async ({ req, res, log, error }) => {
         const { userId, signature, dataToVerify, email } = payload;
 
         if (!userId || !signature || !dataToVerify) {
-            return res.json({ success: false, message: "❌ Missing ID, Signature, or Data" });
+            return res.json({ success: false, message: "❌ Missing signature data" });
         }
 
-        log(`🔒 Processing '${action}' for: ${email}`);
         const employeeDocs = await databases.listDocuments(
-            DB_ID,
-            'employees',
-            [Query.equal('email', email)]
+            DB_ID, 'employees', [Query.equal('email', email)]
         );
 
-        if (employeeDocs.total === 0) {
-            return res.json({ success: false, message: "❌ User not found" });
-        }
+        if (employeeDocs.total === 0) return res.json({ success: false, message: "❌ User not found" });
 
         const userProfile = employeeDocs.documents[0];
         const storedPublicKeyPem = userProfile.devicePublicKey;
 
-        if (!storedPublicKeyPem) {
-            return res.json({ success: false, message: "❌ Device not registered" });
-        }
+        if (!storedPublicKeyPem) return res.json({ success: false, message: "❌ Device not registered" });
 
         const publicKey = forge.pki.publicKeyFromPem(storedPublicKeyPem);
         const md = forge.md.sha256.create();
@@ -83,41 +76,28 @@ export default async ({ req, res, log, error }) => {
         const isVerified = publicKey.verify(md.digest().bytes(), signatureBytes);
 
         if (isVerified) {
-            log("✅ Signature Valid!");
-
             const auditDetails = JSON.stringify({
                 employeeName: userProfile.name,
-                role: userProfile.role || 'employee',
                 device: req.headers['user-agent'] || 'unknown',
                 status: 'verified',
                 signedData: dataToVerify
             });
-
             const hashMd = forge.md.sha256.create();
             hashMd.update(auditDetails);
-            const secureHash = hashMd.digest().toHex();
 
             await databases.createDocument(
-                DB_ID,
-                'audit',
-                'unique()',
+                DB_ID, 'audit', 'unique()',
                 {
                     timestamp: new Date().toISOString(),
                     actorId: userProfile.$id,
                     action: action,
                     payload: auditDetails,
-                    hash: secureHash
+                    hash: hashMd.digest().toHex()
                 }
             );
-
-            return res.json({ 
-                success: true, 
-                message: `✅ Successfully Recorded: ${action.toUpperCase()}` 
-            });
-
+            return res.json({ success: true, message: `✅ Recorded: ${action}` });
         } else {
-            error("⛔ Signature Invalid! Possible Hacker.");
-            return res.json({ success: false, message: "⛔ Security Alert: Invalid Signature" });
+            return res.json({ success: false, message: "⛔ Invalid Signature" });
         }
     }
 
