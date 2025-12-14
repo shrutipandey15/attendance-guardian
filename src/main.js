@@ -27,37 +27,46 @@ export default async ({ req, res, log, error }) => {
     );
 
     if (employeeDocs.total === 0) {
-      return res.json({ success: false, message: "❌ User not found in DB" });
+      return res.json({ success: false, message: "❌ User not found" });
     }
 
     const userProfile = employeeDocs.documents[0];
     const storedPublicKeyPem = userProfile.devicePublicKey;
 
     if (!storedPublicKeyPem) {
-      return res.json({ success: false, message: "❌ No device registered for this user." });
+      return res.json({ success: false, message: "❌ Device not registered" });
     }
 
     const publicKey = forge.pki.publicKeyFromPem(storedPublicKeyPem);
     const md = forge.md.sha256.create();
     md.update(dataToVerify, 'utf8');
-    
     const signatureBytes = forge.util.decode64(signature);
-    
     const isVerified = publicKey.verify(md.digest().bytes(), signatureBytes);
 
     if (isVerified) {
-      log("✅ Signature Valid! Identity Confirmed.");
+      log("✅ Signature Valid!");
+      const timestamp = new Date().toISOString();
+      const auditPayload = JSON.stringify({
+         signatureVerified: true,
+         signedData: dataToVerify,
+         device: req.headers['user-agent']
+      });
+      const hashMd = forge.md.sha256.create();
+      hashMd.update(auditPayload);
+      const currentHash = hashMd.digest().toHex();
 
       await databases.createDocument(
         DB_ID,
         'audit',
         'unique()',
         {
-          actorId: userProfile.$id,
+          actorId: userProfile.$id, 
+          action: "check-in",           
+          payload: auditPayload,
+          hash: currentHash,            
+          timestamp: timestamp,          
           employeeName: userProfile.name,
-          action: "check-in",
-          timestamp: new Date().toISOString(),
-          status: 'verified',
+          status: 'verified',          
           deviceFingerprint: req.headers['user-agent'] || 'unknown'
         }
       );
