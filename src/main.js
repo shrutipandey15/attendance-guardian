@@ -22,29 +22,36 @@ export default async ({ req, res, log, error }) => {
     const action = payload.action;
 
     if (action === 'create_employee') {
+        log("--- DEBUG MODE STARTED ---");
+        log(`Admin Team ID present: ${ADMIN_TEAM_ID ? 'YES' : 'NO'}`);
+        log(`API Key present: ${process.env.APPWRITE_API_KEY ? 'YES' : 'NO'}`);
+        if (process.env.APPWRITE_API_KEY) {
+             log(`API Key Preview: ${process.env.APPWRITE_API_KEY.substring(0, 5)}...`); 
+        }
         const callerId = req.headers['x-appwrite-user-id'];
+        log(`Caller ID: ${callerId || 'MISSING'}`);
 
         if (!callerId) {
-            return res.json({ success: false, message: "⛔ Unauthorized: Missing User ID" });
+            return res.json({ success: false, message: "⛔ Debug: Missing x-appwrite-user-id header" });
         }
-
         try {
-            if (!ADMIN_TEAM_ID) {
-                throw new Error("Admin Team ID not configured on server.");
-            }
-
             const membershipCheck = await teams.listMemberships(
                 ADMIN_TEAM_ID,
                 [Query.equal('userId', callerId)]
             );
+            
+            log(`Membership Total: ${membershipCheck.total}`);
 
             if (membershipCheck.total === 0) {
-                return res.json({ success: false, message: "⛔ Unauthorized: You are not an Admin." });
+                return res.json({ success: false, message: "⛔ Debug: User is not in Admin Team" });
             }
         } catch (err) {
-            error("Auth Check Failed: " + err.message);
-            return res.json({ success: false, message: "⛔ Authorization Error" });
+            // THIS IS THE CRITICAL PART
+            error(`🚨 API ERROR: ${err.message}`);
+            error(`Stack: ${err.stack}`);
+            return res.json({ success: false, message: `⛔ API Error: ${err.message}` });
         }
+        log("--- AUTH CHECK PASSED ---");
 
         const { email, password, name, salary } = payload.data || {};
 
