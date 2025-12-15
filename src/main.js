@@ -7,118 +7,122 @@ let payrollCache = {
     TTL_MS: 300000
 };
 
-const calculatePayroll = (emp, allLogs, holidays, leaves) => {
-    const today = new Date();
-    const currentDayStr = today.toISOString().split("T")[0];
-    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
-    
-    const records = [];
-    let present = 0, absent = 0, half = 0, hol = 0, lev = 0, weekend = 0;
-    
-    const joinDate = new Date(emp.joinDate);
-    joinDate.setHours(0, 0, 0, 0);
+const toIST = (d) => new Date(new Date(d).toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
 
-    const empLogs = allLogs.filter((l) => l.actorId === emp.$id);
+const fetchAllLogs = async (databases, dbId, collId, baseQueries) => {
+    let allDocs = [];
+    let lastId = null;
+
+    while (true) {
+        const currentQueries = [
+            ...baseQueries,
+            Query.limit(5000)
+        ];
+        
+        if (lastId) {
+            currentQueries.push(Query.cursorAfter(lastId));
+        }
+
+        const response = await databases.listDocuments(dbId, collId, currentQueries);
+        allDocs.push(...response.documents);
+
+        if (response.documents.length < 5000) break;
+
+        lastId = response.documents[response.documents.length - 1].$id;
+    }
+    
+    return allDocs;
+};
+
+const calculatePayroll = (emp, userLogs, holidays, leaves) => {
+    const todayIST = toIST(new Date());
+    const daysInMonth = new Date(todayIST.getFullYear(), todayIST.getMonth() + 1, 0).getDate();
+    
+    let records = [];
+    let present = 0, absent = 0, half = 0, hol = 0, lev = 0, weekend = 0;
+
+    const empLogs = userLogs
+        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
     const empLeaves = leaves.filter((l) => l.employeeId === emp.$id);
+    const joinDate = new Date(emp.joinDate);
+    joinDate.setHours(0,0,0,0);
 
     for (let d = 1; d <= daysInMonth; d++) {
-        const date = new Date(today.getFullYear(), today.getMonth(), d);
+        const date = new Date(todayIST.getFullYear(), todayIST.getMonth(), d);
         date.setHours(0, 0, 0, 0); 
         
-        if (date > today) break; 
+        if (date > todayIST) break; 
 
-        const dateStr = date.toISOString().split("T")[0];
+        const dateStr = date.toLocaleDateString('en-CA'); 
         const isSun = date.getDay() === 0;
-        const isToday = dateStr === currentDayStr;
-        
-        const holiday = holidays.find((h) => h.date === dateStr);
-        const leave = empLeaves.find((l) => l.date === dateStr);
-        
-        // Check Join Date
+        const isToday = dateStr === todayIST.toLocaleDateString('en-CA');
+
+        const holiday = holidays.find(h => h.date === dateStr);
+        const leave = empLeaves.find(l => l.date === dateStr);
+
         if (date < joinDate) {
-            records.push({
+             records.push({
                 date: dateStr,
                 day: date.toLocaleDateString("en-US", { weekday: "short" }),
                 status: "Pre-Employment", 
                 inT: "-", outT: "-", dur: 0, notes: "N/A"
             });
-            continue;
+             continue;
         }
-              
-        const logs = empLogs
-            .filter((l) => l.timestamp.startsWith(dateStr))
-            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 
-        // Default Status
+        const dailyCheckIns = empLogs.filter(l => 
+            toIST(l.timestamp).toLocaleDateString('en-CA') === dateStr && l.action === 'check-in'
+        );
+
+        let dur = 0, inT = "-", outT = "-"; 
         let status = isSun ? "Weekend" : holiday ? "Holiday" : leave ? "Leave" : "Absent";
         let notes = holiday?.name || leave?.type || "";
-        let dur = 0, inT = "-", outT = "-";
-        
-        if (logs.length > 0) {
-            let firstCheckIn = null;
-            let lastCheckOut = null;
-            let isAutoCheckedOut = false;
-            
-            for (let i = 0; i < logs.length; i++) {
-                const current = logs[i];
-                if (current.action === 'check-in') {
-                    if (!firstCheckIn) firstCheckIn = current;
-                    const next = logs[i + 1];
 
-                    // Debounce 1 hour
-                    if (next && next.action === 'check-in') {
-                        const diffMs = new Date(next.timestamp).getTime() - new Date(current.timestamp).getTime();
-                        if (diffMs < 60 * 60 * 1000) continue; 
-                    }
+        if (dailyCheckIns.length > 0) {
+            let firstIn = null, lastOut = null, autoOut = false;
 
-                    if (next && next.action === 'check-out') {
-                        const diff = (new Date(next.timestamp).getTime() - new Date(current.timestamp).getTime()) / 3600000;
+            for (let checkIn of dailyCheckIns) {
+                const mainIndex = empLogs.findIndex(l => l === checkIn);
+                const nextLog = empLogs[mainIndex + 1];
+                if (nextLog && nextLog.action === 'check-in') {
+                     const diffMins = (new Date(nextLog.timestamp) - new Date(checkIn.timestamp)) / 60000;
+                     if (diffMins < 60) continue; 
+                }
+
+                if (!firstIn) firstIn = checkIn;
+
+                if (nextLog && nextLog.action === 'check-out') {
+                    const diff = (new Date(nextLog.timestamp) - new Date(checkIn.timestamp)) / 3600000;
+                    
+                    if (diff < 20) {
                         dur += diff;
-                        lastCheckOut = next;
-                        i++; 
+                        lastOut = nextLog; 
                     } else {
-                        // Missing Out
-                        if (isToday) {
-                            outT = "In Progress";
-                            notes = "Shift Active";
-                        } else {
-                            dur += 4; 
-                            isAutoCheckedOut = true;
-                            notes += " (Missed Out: Auto 4h)";
-                        }
+                         dur += 4; autoOut = true; notes += " (Forgot Out)";
                     }
+                } else {
+                    if (isToday) { outT = "In Progress"; notes = "Shift Active"; }
+                    else { dur += 4; autoOut = true; notes += " (Missed Out)"; }
                 }
             }
-
-            if (firstCheckIn) inT = new Date(firstCheckIn.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
-            if (lastCheckOut) outT = new Date(lastCheckOut.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
-            else if (isAutoCheckedOut) outT = "⚠️ Auto";
+            
+            if (firstIn) inT = toIST(firstIn.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", hour12: true });
+            if (lastOut) outT = toIST(lastOut.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit", hour12: true });
+            else if (autoOut) outT = "⚠️ Auto";
             
             if (dur > 0) { 
-                if (isSun || holiday) {
-                    status = "Present";
-                    present++;
-                    notes = isSun ? "Sunday Work" : `Holiday Work`;
-                } else {
-                    if (dur <= 4) {
-                        status = "Half-Day";
-                        half++;
-                    } else {
-                        status = "Present";
-                        present++;
-                    }
-                }
+                if (isSun || holiday) { status = "Present"; present++; }
+                else if (dur <= 4) { status = "Half-Day"; half++; }
+                else { status = "Present"; present++; }
             } else {
-                if (isToday && firstCheckIn) status = "Present"; 
-                else if (status === "Weekend") { weekend++; } 
-                else if (status === "Holiday") { hol++; }
-                else if (status === "Leave") { lev++; }
-                else {
-                    status = "Absent";
-                    absent++;
-                }
+                 if (isToday && firstIn) status = "Present"; 
+                 else if (status === "Weekend") weekend++; 
+                 else if (status === "Holiday") hol++;
+                 else if (status === "Leave") lev++;
+                 else { status = "Absent"; absent++; }
             }
-        } else { 
+        } else {
             if (status === "Weekend") weekend++;
             else if (status === "Holiday") hol++;
             else if (status === "Leave") lev++;
@@ -143,7 +147,7 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
     return {
         employeeId: emp.$id,
         employeeName: emp.name,
-        month: today.toLocaleDateString("en-US", { month: "long" }),
+        month: todayIST.toLocaleDateString("en-US", { month: "long" }),
         netSalary: net.toLocaleString("en-IN", { maximumFractionDigits: 2 }),
         presentDays: present,
         weekendDays: weekend,
@@ -169,8 +173,8 @@ export default async ({ req, res, log, error }) => {
   const ADMIN_TEAM_ID = process.env.APPWRITE_ADMIN_TEAM_ID; 
 
   if (!DB_ID) {
-      error("Missing APPWRITE_DB_ID environment variable. Execution halted.");
-      return res.json({ success: false, message: "Server Error: APPWRITE_DB_ID not configured." });
+      error("Missing APPWRITE_DB_ID environment variable.");
+      return res.json({ success: false, message: "Server Error: Configuration Missing" });
   }
 
   const checkAdmin = async (callerId) => {
@@ -190,8 +194,7 @@ export default async ({ req, res, log, error }) => {
         try { payload = JSON.parse(req.body); } catch (e) { payload = req.body; }
     }
     const action = payload.action;
-    const callerId = req.headers['x-appwrite-user-id']; 
-
+    const callerId = req.headers['x-appwrite-user-id'];
     if (action === 'get_payroll_report') {
         await checkAdmin(callerId); 
 
@@ -201,14 +204,15 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: true, reports: payrollCache.data });
         }
         
-        const today = new Date();
-        const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1).toISOString();
+        const todayIST = toIST(new Date());
+        const startOfMonthDate = new Date(todayIST.getFullYear(), todayIST.getMonth(), 1);
+        startOfMonthDate.setDate(startOfMonthDate.getDate() - 1);
+        const startOfMonthQuery = startOfMonthDate.toISOString();
         
-        const [empRes, logRes, holRes, leaveRes] = await Promise.all([
+        const [empRes, allAuditLogs, holRes, leaveRes] = await Promise.all([
             databases.listDocuments(DB_ID, "employees"),
-            databases.listDocuments(DB_ID, "audit", [
-                Query.greaterThanEqual("timestamp", startOfMonth),
-                Query.limit(5000), 
+            fetchAllLogs(databases, DB_ID, "audit", [
+                Query.greaterThanEqual("timestamp", startOfMonthQuery)
             ]),
             databases.listDocuments(DB_ID, "holidays"),
             databases.listDocuments(DB_ID, "leaves", [
@@ -216,10 +220,16 @@ export default async ({ req, res, log, error }) => {
             ]),
         ]);
 
+        const logsByEmployee = {};
+        allAuditLogs.forEach(log => {
+            if (!logsByEmployee[log.actorId]) logsByEmployee[log.actorId] = [];
+            logsByEmployee[log.actorId].push(log);
+        });
+
         const allReports = empRes.documents.map(emp => 
             calculatePayroll(
                 emp, 
-                logRes.documents, 
+                logsByEmployee[emp.$id] || [], 
                 holRes.documents, 
                 leaveRes.documents
             )
@@ -230,7 +240,6 @@ export default async ({ req, res, log, error }) => {
 
         return res.json({ success: true, reports: allReports });
     }
-
     if (action === 'create_employee') {
         await checkAdmin(callerId); 
         const { email, password, name, salary } = payload.data || {};
@@ -256,7 +265,7 @@ export default async ({ req, res, log, error }) => {
                 }
             );
             
-            payrollCache.data = null; 
+            payrollCache.data = null;
 
             log(`✅ Created Employee: ${name}`);
             return res.json({ success: true, userId: newUser.$id });
@@ -266,7 +275,6 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: false, message: `DB Error: ${err.message}` });
         }
     }
-    
     if (action === 'check-in' || action === 'check-out') {
         const { userId, signature, dataToVerify, email } = payload;
         
@@ -276,7 +284,6 @@ export default async ({ req, res, log, error }) => {
         if (employeeDocs.total === 0) return res.json({ success: false, message: "❌ User not found" });
         
         const userProfile = employeeDocs.documents[0];
-        
         const userAgent = userProfile.deviceFingerprint || 'Device Not Bound/Logged';
         
         if (!userProfile.devicePublicKey) return res.json({ success: false, message: "❌ Device not registered" });
@@ -304,7 +311,7 @@ export default async ({ req, res, log, error }) => {
                 payload: auditDetails,
                 hash: hashMd.digest().toHex()
             });
-            payrollCache.data = null; 
+            payrollCache.data = null;
             
             return res.json({ success: true, message: `✅ Recorded: ${action}` });
         } else {
