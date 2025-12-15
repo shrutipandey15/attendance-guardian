@@ -9,27 +9,12 @@ let payrollCache = {
 
 const calculatePayroll = (emp, allLogs, holidays, leaves) => {
     const today = new Date();
+    const currentDayStr = today.toISOString().split("T")[0];
     const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
     
     const records = [];
-    let present = 0, absent = 0, half = 0, hol = 0, lev = 0;
+    let present = 0, absent = 0, half = 0, hol = 0, lev = 0, weekend = 0;
     
-    const STANDARD_WORK_HOURS = 8; 
-    const MIN_HALF_DAY_HOURS = 4;
-    
-    let standardMonthWorkDays = 0;
-    for (let d = 1; d <= daysInMonth; d++) {
-        const dDate = new Date(today.getFullYear(), today.getMonth(), d);
-        const dStr = dDate.toISOString().split("T")[0];
-        const isSun = dDate.getDay() === 0;
-        const isHol = holidays.some(h => h.date === dStr);
-        if (!isSun && !isHol) {
-            standardMonthWorkDays++;
-        }
-    }
-    standardMonthWorkDays = standardMonthWorkDays || 1;
-
-    let totalOvertimeHours = 0;
     const joinDate = new Date(emp.joinDate);
     joinDate.setHours(0, 0, 0, 0);
 
@@ -37,130 +22,136 @@ const calculatePayroll = (emp, allLogs, holidays, leaves) => {
     const empLeaves = leaves.filter((l) => l.employeeId === emp.$id);
 
     for (let d = 1; d <= daysInMonth; d++) {
-      const date = new Date(today.getFullYear(), today.getMonth(), d);
-      date.setHours(0, 0, 0, 0); 
-      
-      if (date > today) break; 
+        const date = new Date(today.getFullYear(), today.getMonth(), d);
+        date.setHours(0, 0, 0, 0); 
+        
+        if (date > today) break; 
 
-      const dateStr = date.toISOString().split("T")[0];
-      const isSun = date.getDay() === 0;
-      const holiday = holidays.find((h) => h.date === dateStr);
-      const leave = empLeaves.find((l) => l.date === dateStr);
-      
-      if (date < joinDate) {
+        const dateStr = date.toISOString().split("T")[0];
+        const isSun = date.getDay() === 0;
+        const isToday = dateStr === currentDayStr;
+        
+        const holiday = holidays.find((h) => h.date === dateStr);
+        const leave = empLeaves.find((l) => l.date === dateStr);
+        
+        // Check Join Date
+        if (date < joinDate) {
+            records.push({
+                date: dateStr,
+                day: date.toLocaleDateString("en-US", { weekday: "short" }),
+                status: "Pre-Employment", 
+                inT: "-", outT: "-", dur: 0, notes: "N/A"
+            });
+            continue;
+        }
+              
+        const logs = empLogs
+            .filter((l) => l.timestamp.startsWith(dateStr))
+            .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+
+        // Default Status
+        let status = isSun ? "Weekend" : holiday ? "Holiday" : leave ? "Leave" : "Absent";
+        let notes = holiday?.name || leave?.type || "";
+        let dur = 0, inT = "-", outT = "-";
+        
+        if (logs.length > 0) {
+            let firstCheckIn = null;
+            let lastCheckOut = null;
+            let isAutoCheckedOut = false;
+            
+            for (let i = 0; i < logs.length; i++) {
+                const current = logs[i];
+                if (current.action === 'check-in') {
+                    if (!firstCheckIn) firstCheckIn = current;
+                    const next = logs[i + 1];
+
+                    // Debounce 1 hour
+                    if (next && next.action === 'check-in') {
+                        const diffMs = new Date(next.timestamp).getTime() - new Date(current.timestamp).getTime();
+                        if (diffMs < 60 * 60 * 1000) continue; 
+                    }
+
+                    if (next && next.action === 'check-out') {
+                        const diff = (new Date(next.timestamp).getTime() - new Date(current.timestamp).getTime()) / 3600000;
+                        dur += diff;
+                        lastCheckOut = next;
+                        i++; 
+                    } else {
+                        // Missing Out
+                        if (isToday) {
+                            outT = "In Progress";
+                            notes = "Shift Active";
+                        } else {
+                            dur += 4; 
+                            isAutoCheckedOut = true;
+                            notes += " (Missed Out: Auto 4h)";
+                        }
+                    }
+                }
+            }
+
+            if (firstCheckIn) inT = new Date(firstCheckIn.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
+            if (lastCheckOut) outT = new Date(lastCheckOut.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
+            else if (isAutoCheckedOut) outT = "⚠️ Auto";
+            
+            if (dur > 0) { 
+                if (isSun || holiday) {
+                    status = "Present";
+                    present++;
+                    notes = isSun ? "Sunday Work" : `Holiday Work`;
+                } else {
+                    if (dur <= 4) {
+                        status = "Half-Day";
+                        half++;
+                    } else {
+                        status = "Present";
+                        present++;
+                    }
+                }
+            } else {
+                if (isToday && firstCheckIn) status = "Present"; 
+                else if (status === "Weekend") { weekend++; } 
+                else if (status === "Holiday") { hol++; }
+                else if (status === "Leave") { lev++; }
+                else {
+                    status = "Absent";
+                    absent++;
+                }
+            }
+        } else { 
+            if (status === "Weekend") weekend++;
+            else if (status === "Holiday") hol++;
+            else if (status === "Leave") lev++;
+            else if (status === "Absent") absent++;
+        }
+
         records.push({
             date: dateStr,
             day: date.toLocaleDateString("en-US", { weekday: "short" }),
-            status: "Pre-Employment", 
-            inT: "-", outT: "-", dur: 0, ot: 0, notes: "Pre-Employment"
+            status,
+            inT,
+            outT,
+            dur: parseFloat(dur.toFixed(1)),
+            notes,
         });
-        continue;
-      }
-            
-      const logs = empLogs
-        .filter((l) => l.timestamp.startsWith(dateStr))
-        .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
-
-      let status = isSun ? "Weekend" : holiday ? "Holiday" : leave ? "Leave" : "Absent";
-      let notes = holiday?.name || leave?.type || "";
-      let dur = 0, ot = 0, inT = "-", outT = "-";
-      
-      if (logs.length > 0) {
-        let firstCheckIn = null;
-        let lastCheckOut = null;
-        
-        for (let i = 0; i < logs.length - 1; i++) {
-          const current = logs[i];
-          const next = logs[i + 1];
-
-          if (current.action === 'check-in' && next.action === 'check-out') {
-            const diff = (new Date(next.timestamp).getTime() - new Date(current.timestamp).getTime()) / 3600000;
-            dur += diff;
-            
-            if (!firstCheckIn) firstCheckIn = current;
-            lastCheckOut = next;
-          }
-        }
-        if (firstCheckIn) inT = new Date(firstCheckIn.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
-        if (lastCheckOut) outT = new Date(lastCheckOut.timestamp).toLocaleTimeString('en-US', { hour: "2-digit", minute: "2-digit" });
-        
-        const checkOutOk = logs.at(-1)?.action === "check-out";
-        if (dur > 0) { 
-          if (isSun || holiday) {
-            status = "Present";
-            present++;
-            ot = dur; 
-            notes = isSun ? "Sunday OT" : `Holiday Work`;
-          } else {
-            if (dur >= STANDARD_WORK_HOURS) {
-              status = "Present";
-              present++;
-            } else if (dur >= MIN_HALF_DAY_HOURS) {
-              status = "Half-Day";
-              half++;
-            } else {
-              status = "Absent";
-              absent++;
-              notes = `Short hours (${dur.toFixed(1)}h)`;
-            }
-            if (dur > STANDARD_WORK_HOURS) ot = dur - STANDARD_WORK_HOURS;
-          }
-          if (!checkOutOk) {
-             outT = "⚠️ Missed";
-             notes += " (Last-out missed)";
-          }
-
-        } else {
-            outT = "⚠️ Missed"; 
-            if (status === "Leave" || status === "Holiday" || status === "Weekend") {
-                notes = notes || "Invalid log sequence";
-            } else {
-                status = "Absent";
-                absent++;
-                notes = "❌ Invalid logs (0 valid hours)";
-            }
-        }
-      } 
-      else { 
-        if (status === "Holiday") hol++;
-        else if (status === "Leave") lev++;
-        else if (status === "Absent" && !isSun) absent++;
-      }
-
-      totalOvertimeHours += ot;
-
-      records.push({
-        date: dateStr,
-        day: date.toLocaleDateString("en-US", { weekday: "short" }),
-        status,
-        inT,
-        outT,
-        dur: parseFloat(dur.toFixed(1)),
-        ot: parseFloat(ot.toFixed(1)),
-        notes,
-      });
     }
-    const dailyRate = emp.salaryMonthly / standardMonthWorkDays;
-    const hourlyRate = emp.salaryMonthly / (standardMonthWorkDays * STANDARD_WORK_HOURS);
-    
-    const overtimePay = totalOvertimeHours * hourlyRate * 1.5; 
-    const totalPaidDays = present + lev + hol + (half * 0.5);
-    
-    const regularPay = dailyRate * totalPaidDays;
-    
-    const net = regularPay + overtimePay;
+
+    const dailyRate = emp.salaryMonthly / daysInMonth;
+    const totalPaidDays = present + weekend + lev + hol + (half * 0.5);
+    const net = dailyRate * totalPaidDays;
 
     return {
-      employeeId: emp.$id,
-      employeeName: emp.name,
-      month: today.toLocaleDateString("en-US", { month: "long" }),
-      netSalary: net.toLocaleString("en-IN", { maximumFractionDigits: 2 }),
-      presentDays: present,
-      absentDays: absent, 
-      holidayDays: hol,
-      paidLeaveDays: lev,
-      halfDays: half,
-      dailyBreakdown: records,
+        employeeId: emp.$id,
+        employeeName: emp.name,
+        month: today.toLocaleDateString("en-US", { month: "long" }),
+        netSalary: net.toLocaleString("en-IN", { maximumFractionDigits: 2 }),
+        presentDays: present,
+        weekendDays: weekend,
+        absentDays: absent, 
+        holidayDays: hol,
+        paidLeaveDays: lev,
+        halfDays: half,
+        dailyBreakdown: records,
     };
 };
 
