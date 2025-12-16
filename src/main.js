@@ -85,6 +85,7 @@ const calculatePayroll = (emp, userLogs, holidays, leaves) => {
             for (let checkIn of dailyCheckIns) {
                 const mainIndex = empLogs.findIndex(l => l === checkIn);
                 const nextLog = empLogs[mainIndex + 1];
+
                 if (nextLog && nextLog.action === 'check-in') {
                      const diffMins = (new Date(nextLog.timestamp) - new Date(checkIn.timestamp)) / 60000;
                      if (diffMins < 60) continue; 
@@ -93,12 +94,12 @@ const calculatePayroll = (emp, userLogs, holidays, leaves) => {
                 if (!firstIn) firstIn = checkIn;
 
                 if (nextLog && nextLog.action === 'check-out') {
-                    const diff = (new Date(nextLog.timestamp) - new Date(checkIn.timestamp)) / 3600000;
+                    const diff = (new Date(nextLog.timestamp) - new Date(checkIn.timestamp)) / 3600000; 
                     
-                    if (diff < 20) {
+                    if (diff < 20) { 
                         dur += diff;
                         lastOut = nextLog; 
-                    } else {
+                    } else { 
                          dur += 4; autoOut = true; notes += " (Forgot Out)";
                     }
                 } else {
@@ -194,7 +195,8 @@ export default async ({ req, res, log, error }) => {
         try { payload = JSON.parse(req.body); } catch (e) { payload = req.body; }
     }
     const action = payload.action;
-    const callerId = req.headers['x-appwrite-user-id'];
+    const callerId = req.headers['x-appwrite-user-id']; 
+
     if (action === 'get_payroll_report') {
         await checkAdmin(callerId); 
 
@@ -206,7 +208,7 @@ export default async ({ req, res, log, error }) => {
         
         const todayIST = toIST(new Date());
         const startOfMonthDate = new Date(todayIST.getFullYear(), todayIST.getMonth(), 1);
-        startOfMonthDate.setDate(startOfMonthDate.getDate() - 1);
+        startOfMonthDate.setDate(startOfMonthDate.getDate() - 1); 
         const startOfMonthQuery = startOfMonthDate.toISOString();
         
         const [empRes, allAuditLogs, holRes, leaveRes] = await Promise.all([
@@ -240,6 +242,7 @@ export default async ({ req, res, log, error }) => {
 
         return res.json({ success: true, reports: allReports });
     }
+
     if (action === 'create_employee') {
         await checkAdmin(callerId); 
         const { email, password, name, salary } = payload.data || {};
@@ -265,7 +268,7 @@ export default async ({ req, res, log, error }) => {
                 }
             );
             
-            payrollCache.data = null;
+            payrollCache.data = null; 
 
             log(`✅ Created Employee: ${name}`);
             return res.json({ success: true, userId: newUser.$id });
@@ -275,6 +278,49 @@ export default async ({ req, res, log, error }) => {
             return res.json({ success: false, message: `DB Error: ${err.message}` });
         }
     }
+
+    if (action === 'admin_manage_log') {
+        await checkAdmin(callerId);
+        
+        const { operation, logId, data } = payload;
+
+        if (operation === 'delete') {
+            if (!logId) return res.json({ success: false, message: "Missing Log ID" });
+            await databases.deleteDocument(DB_ID, 'audit', logId);
+            payrollCache.data = null; 
+            return res.json({ success: true, message: "✅ Log deleted" });
+        }
+
+        if (operation === 'create') {
+            const { employeeId, timestamp, type } = data; 
+            
+            if (!employeeId || !timestamp || !type) {
+                return res.json({ success: false, message: "Missing required data" });
+            }
+
+            const empDoc = await databases.getDocument(DB_ID, 'employees', employeeId);
+
+            const auditDetails = JSON.stringify({
+                employeeName: empDoc.name,
+                role: empDoc.role,
+                device: 'Manual Admin Entry',
+                status: 'verified',
+                signedData: 'Admin Override'
+            });
+
+            await databases.createDocument(DB_ID, 'audit', ID.unique(), {
+                timestamp: timestamp, 
+                actorId: employeeId,
+                action: type,
+                payload: auditDetails,
+                hash: 'ADMIN_OVERRIDE'
+            });
+
+            payrollCache.data = null; 
+            return res.json({ success: true, message: "✅ Manual log added" });
+        }
+    }
+    
     if (action === 'check-in' || action === 'check-out') {
         const { userId, signature, dataToVerify, email } = payload;
         
@@ -311,7 +357,7 @@ export default async ({ req, res, log, error }) => {
                 payload: auditDetails,
                 hash: hashMd.digest().toHex()
             });
-            payrollCache.data = null;
+            payrollCache.data = null; 
             
             return res.json({ success: true, message: `✅ Recorded: ${action}` });
         } else {
