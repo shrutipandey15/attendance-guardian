@@ -322,6 +322,18 @@ export default async ({ req, res, log, error }) => {
     }
     
     if (action === 'check-in' || action === 'check-out') {
+        if (action === 'check-in') {
+            const nowIST = toIST(new Date());
+            const currentHour = nowIST.getHours();
+            const currentMinute = nowIST.getMinutes();
+
+            if (currentHour > 9 || (currentHour === 9 && currentMinute > 15)) {
+                return res.json({ 
+                    success: false, 
+                    message: "⛔ Late Entry! Check-in closes at 9:15 AM." 
+                });
+            }
+        }
         const { userId, signature, dataToVerify, email } = payload;
         
         if (!userId || !signature) return res.json({ success: false, message: "❌ Missing signature" });
