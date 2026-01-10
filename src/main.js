@@ -945,6 +945,10 @@ const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
  * 3. Idempotency: Deletes old payroll before creating new one.
  * 4. Bad Data: Handles missing joinDate properly.
  */
+/**
+ * Handle generate payroll
+ * Uses Promise.all to save attendance records in parallel
+ */
 const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const { month } = payload;
 
@@ -952,21 +956,29 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     return { success: false, message: 'Missing month parameter (format: YYYY-MM)' };
   }
 
-  const employeesResult = await databases.listDocuments(dbId, 'employees', [
-    Query.limit(100)
+  const existingPayrollResult = await databases.listDocuments(dbId, 'payroll', [
+    Query.equal('month', month),
+    Query.limit(1)
   ]);
 
-  // Get holidays for the month
-  const holidaysResult = await databases.listDocuments(dbId, 'holidays', [
-    Query.greaterThanEqual('date', month + '-01'),
-    Query.lessThan('date', month + '-32')
-  ]);
+  if (existingPayrollResult.total > 0) {
+    return {
+      success: false,
+      message: `Payroll already generated for ${month}. Unlock it first to regenerate.`
+    };
+  }
 
-  // Get approved leaves for the month
-  const leavesResult = await databases.listDocuments(dbId, 'leaves', [
-    Query.equal('status', 'approved'),
-    Query.greaterThanEqual('date', month + '-01'),
-    Query.lessThan('date', month + '-32')
+  const [employeesResult, holidaysResult, leavesResult] = await Promise.all([
+    databases.listDocuments(dbId, 'employees', [Query.limit(100)]), // Remove Query.equal('isActive', true) to pay ex-employees
+    databases.listDocuments(dbId, 'holidays', [
+      Query.greaterThanEqual('date', month + '-01'),
+      Query.lessThan('date', month + '-32')
+    ]),
+    databases.listDocuments(dbId, 'leaves', [
+      Query.equal('status', 'approved'),
+      Query.greaterThanEqual('date', month + '-01'),
+      Query.lessThan('date', month + '-32')
+    ])
   ]);
 
   const employees = employeesResult.documents;
@@ -984,7 +996,6 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const payrollRecords = [];
 
   for (const employee of employees) {
-    
     if (!employee.isActive) {
          const hasAttendance = await databases.listDocuments(dbId, 'attendance', [
              Query.equal('employeeId', employee.$id),
@@ -997,29 +1008,20 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     let employeeJoinDate;
     if (employee.joinDate) {
       employeeJoinDate = new Date(employee.joinDate);
+      if (isNaN(employeeJoinDate.getTime())) {
+          console.error(`Invalid join date for ${employee.name}`);
+          employeeJoinDate = new Date(month + '-01');
+      }
     } else {
-      console.warn(`Employee ${employee.name} has no join date. Defaulting to month start.`);
       employeeJoinDate = new Date(month + '-01');
     }
 
     const monthStartDate = new Date(month + '-01');
     const monthEndDate = new Date(parseInt(year), parseInt(monthNum), 0);
-    if (employeeJoinDate > monthEndDate) {
-      continue;
-    }
+    
+    if (employeeJoinDate > monthEndDate) continue;
 
-    const firstWorkingDay = employeeJoinDate > monthStartDate
-      ? employeeJoinDate.getDate()
-      : 1;
-
-    const existingPayroll = await databases.listDocuments(dbId, 'payroll', [
-        Query.equal('employeeId', employee.$id),
-        Query.equal('month', month)
-    ]);
-    if (existingPayroll.total > 0) {
-        await databases.deleteDocument(dbId, 'payroll', existingPayroll.documents[0].$id);
-    }
-
+    const firstWorkingDay = employeeJoinDate > monthStartDate ? employeeJoinDate.getDate() : 1;
     const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
       Query.equal('employeeId', employee.$id),
       Query.greaterThanEqual('date', month + '-01'),
@@ -1030,94 +1032,84 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     attendanceResult.documents.forEach(att => {
       attendanceMap[att.date] = att;
     });
-
-    let presentDays = 0;
-    let halfDays = 0;
-    let absentDays = 0;
-    let sundayDays = 0;
-    let holidayDays = 0;
-    let leaveDays = 0;
+    let presentDays = 0, halfDays = 0, absentDays = 0, sundayDays = 0, holidayDays = 0, leaveDays = 0;
     let actualWorkingDays = 0;
+    
+    const missingRecordsToCreate = [];
 
-    for (let day = 1; day <= lastBillableDay; day++) {
-      const date = `${month}-${String(day).padStart(2, '0')}`;
-      const dateObj = new Date(date);
+    for (let day = 1; day <= daysInMonth; day++) {
+       if (day > lastBillableDay) break;
 
-      if (day < firstWorkingDay) {
-        continue;
-      }
+       if (day < firstWorkingDay) continue;
 
-      actualWorkingDays++;
+       actualWorkingDays++;
+       const date = `${month}-${String(day).padStart(2, '0')}`;
+       const dateObj = new Date(date);
+       const isSundayDate = dateObj.getDay() === 0;
+       
+       const holidayRecord = holidays.find(h => h.date === date);
+       const leaveRecord = leaves.find(l => l.employeeId === employee.$id && l.date === date);
+       
+       let attendance = attendanceMap[date];
 
-      const isSundayDate = dateObj.getDay() === 0;
-      const holidayRecord = holidays.find(h => h.date === date);
-      const leaveRecord = leaves.find(l => l.employeeId === employee.$id && l.date === date);
+       if (!attendance) {
+         let status, notes;
+         
+         if (isSundayDate) {
+             status = ATTENDANCE_STATUS.SUNDAY;
+             notes = 'Auto-marked';
+             sundayDays++;
+         } else if (holidayRecord) {
+             status = ATTENDANCE_STATUS.HOLIDAY;
+             notes = holidayRecord.name;
+             holidayDays++;
+         } else if (leaveRecord) {
+             status = ATTENDANCE_STATUS.LEAVE;
+             notes = leaveRecord.type;
+             leaveDays++;
+         } else {
+             status = ATTENDANCE_STATUS.ABSENT;
+             notes = 'Auto-marked';
+             absentDays++;
+         }
 
-      let attendance = attendanceMap[date];
-
-      if (!attendance) {
-        // Create attendance record retrospectively
-        let status, notes;
-
-        if (isSundayDate) {
-          status = ATTENDANCE_STATUS.SUNDAY;
-          notes = 'Auto-marked';
-          sundayDays++;
-        } else if (holidayRecord) {
-          status = ATTENDANCE_STATUS.HOLIDAY;
-          notes = holidayRecord.name;
-          holidayDays++;
-        } else if (leaveRecord) {
-          status = ATTENDANCE_STATUS.LEAVE;
-          notes = leaveRecord.type;
-          leaveDays++;
-        } else {
-          status = ATTENDANCE_STATUS.ABSENT;
-          notes = 'Auto-marked';
-          absentDays++;
-        }
-
-        attendance = await databases.createDocument(dbId, 'attendance', ID.unique(), {
-          employeeId: employee.$id,
-          date,
-          status,
-          isAutoCalculated: true,
-          isLocked: false,
-          isLocationFlagged: false,
-          notes
-        });
-      } else {
-        // Count existing attendance
-        switch (attendance.status) {
-          case ATTENDANCE_STATUS.PRESENT:
-            presentDays++;
-            break;
-          case ATTENDANCE_STATUS.HALF_DAY:
-            halfDays++;
-            break;
-          case ATTENDANCE_STATUS.ABSENT:
-            absentDays++;
-            break;
-          case ATTENDANCE_STATUS.SUNDAY:
-            sundayDays++;
-            break;
-          case ATTENDANCE_STATUS.HOLIDAY:
-            holidayDays++;
-            break;
-          case ATTENDANCE_STATUS.LEAVE:
-            leaveDays++;
-            break;
-        }
-      }
+         missingRecordsToCreate.push(
+             databases.createDocument(dbId, 'attendance', ID.unique(), {
+                 employeeId: employee.$id,
+                 date,
+                 status,
+                 isAutoCalculated: true,
+                 isLocked: true,
+                 isLocationFlagged: false,
+                 notes
+             }).catch(e => console.error(`Failed to create attendance for ${date}:`, e.message))
+         );
+       } else {
+         switch (attendance.status) {
+             case ATTENDANCE_STATUS.PRESENT: presentDays++; break;
+             case ATTENDANCE_STATUS.HALF_DAY: halfDays++; break;
+             case ATTENDANCE_STATUS.ABSENT: absentDays++; break;
+             case ATTENDANCE_STATUS.SUNDAY: sundayDays++; break;
+             case ATTENDANCE_STATUS.HOLIDAY: holidayDays++; break;
+             case ATTENDANCE_STATUS.LEAVE: leaveDays++; break;
+         }
+         
+         // If existing record is not locked, lock it now
+         if (!attendance.isLocked) {
+             missingRecordsToCreate.push(
+                 databases.updateDocument(dbId, 'attendance', attendance.$id, { isLocked: true })
+             );
+         }
+       }
     }
-
-    // Calculate payroll based on actual working days (pro-rated)
+    if (missingRecordsToCreate.length > 0) {
+        await Promise.all(missingRecordsToCreate);
+    }
     const baseSalary = employee.salaryMonthly;
-    const dailyRate = baseSalary / daysInMonth; 
+    const dailyRate = baseSalary / daysInMonth;
     const paidDays = presentDays + sundayDays + holidayDays + leaveDays + (halfDays * 0.5);
     const netSalary = dailyRate * paidDays;
 
-    // Create payroll record
     const payroll = await databases.createDocument(dbId, 'payroll', ID.unique(), {
       employeeId: employee.$id,
       month,
@@ -1136,38 +1128,22 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
       generatedAt: new Date().toISOString()
     });
 
-    // Lock all attendance for this employee for this month
-    for (const att of Object.values(attendanceMap)) {
-      await databases.updateDocument(dbId, 'attendance', att.$id, {
-        isLocked: true
-      });
-    }
-
     totalPayout += netSalary;
     payrollRecords.push(payroll);
   }
 
-  // Create audit log
   await createAuditLog(databases, dbId, {
     actorId: callerId,
     action: AUDIT_ACTIONS.PAYROLL_GENERATED,
     targetId: null,
     targetType: 'payroll',
-    payload: {
-      month,
-      employeesProcessed: employees.length,
-      totalPayout
-    }
+    payload: { month, employeesProcessed: employees.length, totalPayout }
   });
 
   return {
     success: true,
     message: `Payroll generated for ${month}`,
-    data: {
-      month,
-      employeesProcessed: employees.length,
-      totalPayout: totalPayout.toFixed(2)
-    }
+    data: { month, employeesProcessed: employees.length, totalPayout: totalPayout.toFixed(2) }
   };
 };
 
