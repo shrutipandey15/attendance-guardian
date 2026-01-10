@@ -1234,6 +1234,71 @@ const handleUnlockPayroll = async (payload, databases, dbId, callerId) => {
 };
 
 /**
+ * Handle delete payroll (for regeneration)
+ */
+const handleDeletePayroll = async (payload, databases, dbId, callerId) => {
+  const { month, reason } = payload;
+
+  if (!month || !reason) {
+    return { success: false, message: 'Missing required fields' };
+  }
+
+  if (reason.trim().length < 10) {
+    return { success: false, message: 'Reason must be at least 10 characters' };
+  }
+
+  const payrollResult = await databases.listDocuments(dbId, 'payroll', [
+    Query.equal('month', month)
+  ]);
+
+  if (payrollResult.total === 0) {
+    return { success: false, message: 'No payroll found for this month' };
+  }
+
+  let deletedCount = 0;
+  let deletedAttendanceCount = 0;
+
+  for (const payroll of payrollResult.documents) {
+    const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
+      Query.equal('employeeId', payroll.employeeId),
+      Query.equal('isAutoCalculated', true),
+      Query.greaterThanEqual('date', month + '-01'),
+      Query.lessThan('date', month + '-32')
+    ]);
+
+    for (const att of attendanceResult.documents) {
+      await databases.deleteDocument(dbId, 'attendance', att.$id);
+      deletedAttendanceCount++;
+    }
+
+    await databases.deleteDocument(dbId, 'payroll', payroll.$id);
+    deletedCount++;
+  }
+
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: 'payroll-deleted',
+    targetId: null,
+    targetType: 'payroll',
+    payload: {
+      month,
+      reason,
+      deletedPayrollRecords: deletedCount,
+      deletedAttendanceRecords: deletedAttendanceCount
+    }
+  });
+
+  return {
+    success: true,
+    message: `Deleted ${deletedCount} payroll records and ${deletedAttendanceCount} auto-calculated attendance records for ${month}. You can now regenerate payroll.`,
+    data: {
+      deletedPayrollRecords: deletedCount,
+      deletedAttendanceRecords: deletedAttendanceCount
+    }
+  };
+};
+
+/**
  * Handle get payroll report
  */
 const handleGetPayrollReport = async (payload, databases, dbId) => {
@@ -1407,6 +1472,10 @@ export default async ({ req, res, log, error }) => {
       case 'unlock-payroll':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleUnlockPayroll(payload, databases, DB_ID, callerId));
+
+      case 'delete-payroll':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleDeletePayroll(payload, databases, DB_ID, callerId));
 
       case 'get-payroll-report':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
