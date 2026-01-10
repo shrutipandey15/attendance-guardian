@@ -1390,16 +1390,18 @@ const handleGetSystemInfo = async () => {
 // MAIN FUNCTION (Entry Point)
 // ============================================
 
-export default async ({ req, res, log, error }) => {
-  // Initialize Appwrite client
-  const client = new Client()
-    .setEndpoint('https://cloud.appwrite.io/v1')
-    .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
-    .setKey(process.env.APPWRITE_API_KEY);
-
-  const databases = new Databases(client);
-  const users = new Users(client);
-  const teams = new Teams(client);
+export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockTeams }) => {
+  
+  const databases = _mockDatabases || new Databases(client);
+  const users = _mockUsers || new Users(client);
+  const teams = _mockTeams || new Teams(client);
+  
+  if (!_mockDatabases) {
+      const client = new Client()
+        .setEndpoint('https://cloud.appwrite.io/v1')
+        .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
+        .setKey(process.env.APPWRITE_API_KEY);
+  }
 
   const DB_ID = process.env.APPWRITE_DB_ID;
   const ADMIN_TEAM_ID = process.env.APPWRITE_ADMIN_TEAM_ID;
