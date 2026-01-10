@@ -470,8 +470,6 @@ const handleCheckOut = async (payload, databases, dbId) => {
   // Record check-out
   const checkOutTime = new Date().toISOString();
   const workHours = calculateWorkHours(attendance.checkInTime, checkOutTime);
-  
-  // [UPDATED] Use workHours instead of CheckOutTime for status logic
   const status = calculateAttendanceStatus(workHours);
 
   await databases.updateDocument(dbId, 'attendance', attendance.$id, {
@@ -940,14 +938,8 @@ const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
 
 /**
  * Handle generate payroll
- * 1. Resignation Trap: Fetches Inactive users too.
- * 2. Cut-off Method: Stops calculation at Today's date.
- * 3. Idempotency: Deletes old payroll before creating new one.
- * 4. Bad Data: Handles missing joinDate properly.
- */
-/**
- * Handle generate payroll
  * Uses Promise.all to save attendance records in parallel
+ * Uses dependency injection compatible logic
  */
 const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const { month } = payload;
@@ -969,7 +961,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   }
 
   const [employeesResult, holidaysResult, leavesResult] = await Promise.all([
-    databases.listDocuments(dbId, 'employees', [Query.limit(100)]), // Remove Query.equal('isActive', true) to pay ex-employees
+    databases.listDocuments(dbId, 'employees', [Query.limit(100)]),
     databases.listDocuments(dbId, 'holidays', [
       Query.greaterThanEqual('date', month + '-01'),
       Query.lessThan('date', month + '-32')
@@ -984,8 +976,6 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const employees = employeesResult.documents;
   const holidays = holidaysResult.documents;
   const leaves = leavesResult.documents;
-
-  // Calculate days in month
   const [year, monthNum] = month.split('-');
   const daysInMonth = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
   const now = getNowIST();
@@ -1368,25 +1358,32 @@ const handleGetSystemInfo = async () => {
 // ============================================
 
 export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockTeams }) => {
-  
-  const databases = _mockDatabases || new Databases(client);
-  const users = _mockUsers || new Users(client);
-  const teams = _mockTeams || new Teams(client);
-  
-  if (!_mockDatabases) {
-      const client = new Client()
-        .setEndpoint('https://cloud.appwrite.io/v1')
-        .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
-        .setKey(process.env.APPWRITE_API_KEY);
-  }
+  let client;
+  let databases;
+  let users;
+  let teams;
 
   const DB_ID = process.env.APPWRITE_DB_ID;
   const ADMIN_TEAM_ID = process.env.APPWRITE_ADMIN_TEAM_ID;
 
-  // Validate configuration
-  if (!DB_ID) {
-    error('Missing APPWRITE_DB_ID environment variable');
-    return res.json({ success: false, message: 'Server configuration error' });
+  if (_mockDatabases) {
+      databases = _mockDatabases;
+      users = _mockUsers;
+      teams = _mockTeams;
+  } else {
+      if (!DB_ID) {
+        error('Missing APPWRITE_DB_ID environment variable');
+        return res.json({ success: false, message: 'Server configuration error' });
+      }
+
+      client = new Client()
+        .setEndpoint('https://cloud.appwrite.io/v1')
+        .setProject(process.env.APPWRITE_FUNCTION_PROJECT_ID)
+        .setKey(process.env.APPWRITE_API_KEY);
+
+      databases = new Databases(client);
+      users = new Users(client);
+      teams = new Teams(client);
   }
 
   try {
