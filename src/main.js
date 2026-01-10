@@ -949,6 +949,19 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     return { success: false, message: 'Missing month parameter (format: YYYY-MM)' };
   }
 
+  // Check if payroll already exists for this month
+  const existingPayrollResult = await databases.listDocuments(dbId, 'payroll', [
+    Query.equal('month', month),
+    Query.limit(1)
+  ]);
+
+  if (existingPayrollResult.total > 0) {
+    return {
+      success: false,
+      message: `Payroll already generated for ${month}. Unlock it first to regenerate.`
+    };
+  }
+
   // Get all active employees
   const employeesResult = await databases.listDocuments(dbId, 'employees', [
     Query.equal('isActive', true)
@@ -979,13 +992,26 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const payrollRecords = [];
 
   for (const employee of employees) {
+    if (!employee.joinDate) {
+      console.error(`Employee ${employee.$id} (${employee.name}) has no join date. Skipping payroll.`);
+      continue;
+    }
+
     const employeeJoinDate = new Date(employee.joinDate);
+
+    if (isNaN(employeeJoinDate.getTime())) {
+      console.error(`Employee ${employee.$id} (${employee.name}) has invalid join date: ${employee.joinDate}. Skipping payroll.`);
+      continue;
+    }
+
     const monthStartDate = new Date(month + '-01');
     const monthEndDate = new Date(parseInt(year), parseInt(monthNum), 0); // Last day of month
 
     if (employeeJoinDate > monthEndDate) {
+      console.log(`Employee ${employee.name} joins after ${month}. Skipping.`);
       continue;
     }
+
     const firstWorkingDay = employeeJoinDate > monthStartDate
       ? employeeJoinDate.getDate()
       : 1;
