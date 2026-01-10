@@ -637,11 +637,10 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
   }
 
   let newUser;
+
   try {
-    // Create Appwrite auth user
     newUser = await users.create(ID.unique(), email, null, password, name);
 
-    // Create employee record
     await databases.createDocument(dbId, 'employees', newUser.$id, {
       name,
       email,
@@ -651,7 +650,6 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
       isActive: true
     });
 
-    // Create audit log
     await createAuditLog(databases, dbId, {
       actorId: callerId,
       action: AUDIT_ACTIONS.EMPLOYEE_CREATED,
@@ -673,10 +671,14 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
         email
       }
     };
+
   } catch (err) {
-    // Rollback: delete user if employee creation failed
     if (newUser) {
-      await users.delete(newUser.$id).catch(() => {});
+      try {
+        await users.delete(newUser.$id);
+      } catch (deleteErr) {
+        console.error(`Failed to rollback user ${newUser.$id}: ${deleteErr.message}`);
+      }
     }
     throw err;
   }

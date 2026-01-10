@@ -7,6 +7,22 @@
     "vitest": "^4.0.16"
   },
   "scripts": {
-  "test": "vitest run"
-}
+    "test": "vitest run"
+  },
+  "name": "attendance-guardian",
+  "version": "1.0.0",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/shrutipandey15/attendance-guardian.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/shrutipandey15/attendance-guardian/issues"
+  },
+  "homepage": "https://github.com/shrutipandey15/attendance-guardian#readme",
+  "description": "",
+  "type": "module"
 }
