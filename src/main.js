@@ -1329,6 +1329,7 @@ const handleGetPayrollReport = async (payload, databases, dbId) => {
     ]);
 
     const dailyBreakdown = attendanceResult.documents.map(att => ({
+      id: att.$id,
       date: att.date,
       day: new Date(att.date).toLocaleDateString('en-US', { weekday: 'short' }),
       status: att.status,
