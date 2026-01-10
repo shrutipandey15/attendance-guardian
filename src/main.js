@@ -104,21 +104,18 @@ const isCheckOutAllowed = () => {
 };
 
 /**
- * Calculate attendance status based on check-out time
+ * [UPDATED] Calculate attendance status based on HOURS WORKED
  * Rules:
- * - Before 12:00 PM → Absent
- * - 12:00 PM - 3:59 PM → Half Day
- * - 4:00 PM or later → Full Day (Present)
+ * - Less than 4 hours = Absent
+ * - 4 to 6 hours = Half Day
+ * - More than 6 hours = Present
  */
-const calculateAttendanceStatus = (checkOutTime) => {
-  if (!checkOutTime) return ATTENDANCE_STATUS.ABSENT;
+const calculateAttendanceStatus = (workHours) => {
+  if (workHours === undefined || workHours === null) return ATTENDANCE_STATUS.ABSENT;
 
-  const checkOut = toIST(checkOutTime);
-  const hour = checkOut.getHours();
-
-  if (hour < 12) {
+  if (workHours < 4) {
     return ATTENDANCE_STATUS.ABSENT;
-  } else if (hour < 16) {
+  } else if (workHours < 6) {
     return ATTENDANCE_STATUS.HALF_DAY;
   } else {
     return ATTENDANCE_STATUS.PRESENT;
@@ -473,7 +470,9 @@ const handleCheckOut = async (payload, databases, dbId) => {
   // Record check-out
   const checkOutTime = new Date().toISOString();
   const workHours = calculateWorkHours(attendance.checkInTime, checkOutTime);
-  const status = calculateAttendanceStatus(checkOutTime);
+  
+  // [UPDATED] Use workHours instead of CheckOutTime for status logic
+  const status = calculateAttendanceStatus(workHours);
 
   await databases.updateDocument(dbId, 'attendance', attendance.$id, {
     checkOutTime,
@@ -941,6 +940,10 @@ const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
 
 /**
  * Handle generate payroll
+ * 1. Resignation Trap: Fetches Inactive users too.
+ * 2. Cut-off Method: Stops calculation at Today's date.
+ * 3. Idempotency: Deletes old payroll before creating new one.
+ * 4. Bad Data: Handles missing joinDate properly.
  */
 const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const { month } = payload;
@@ -949,22 +952,8 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     return { success: false, message: 'Missing month parameter (format: YYYY-MM)' };
   }
 
-  // Check if payroll already exists for this month
-  const existingPayrollResult = await databases.listDocuments(dbId, 'payroll', [
-    Query.equal('month', month),
-    Query.limit(1)
-  ]);
-
-  if (existingPayrollResult.total > 0) {
-    return {
-      success: false,
-      message: `Payroll already generated for ${month}. Unlock it first to regenerate.`
-    };
-  }
-
-  // Get all active employees
   const employeesResult = await databases.listDocuments(dbId, 'employees', [
-    Query.equal('isActive', true)
+    Query.limit(100)
   ]);
 
   // Get holidays for the month
@@ -987,34 +976,49 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   // Calculate days in month
   const [year, monthNum] = month.split('-');
   const daysInMonth = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+  const now = getNowIST();
+  const isCurrentMonth = (now.getMonth() + 1) === parseInt(monthNum) && now.getFullYear() === parseInt(year);
+  const lastBillableDay = isCurrentMonth ? now.getDate() : daysInMonth;
 
   let totalPayout = 0;
   const payrollRecords = [];
 
   for (const employee of employees) {
-    if (!employee.joinDate) {
-      console.error(`Employee ${employee.$id} (${employee.name}) has no join date. Skipping payroll.`);
-      continue;
+    
+    if (!employee.isActive) {
+         const hasAttendance = await databases.listDocuments(dbId, 'attendance', [
+             Query.equal('employeeId', employee.$id),
+             Query.startsWith('date', month), 
+             Query.limit(1)
+         ]);
+         if (hasAttendance.total === 0) continue;
     }
 
-    const employeeJoinDate = new Date(employee.joinDate);
-
-    if (isNaN(employeeJoinDate.getTime())) {
-      console.error(`Employee ${employee.$id} (${employee.name}) has invalid join date: ${employee.joinDate}. Skipping payroll.`);
-      continue;
+    let employeeJoinDate;
+    if (employee.joinDate) {
+      employeeJoinDate = new Date(employee.joinDate);
+    } else {
+      console.warn(`Employee ${employee.name} has no join date. Defaulting to month start.`);
+      employeeJoinDate = new Date(month + '-01');
     }
 
     const monthStartDate = new Date(month + '-01');
-    const monthEndDate = new Date(parseInt(year), parseInt(monthNum), 0); // Last day of month
-
+    const monthEndDate = new Date(parseInt(year), parseInt(monthNum), 0);
     if (employeeJoinDate > monthEndDate) {
-      console.log(`Employee ${employee.name} joins after ${month}. Skipping.`);
       continue;
     }
 
     const firstWorkingDay = employeeJoinDate > monthStartDate
       ? employeeJoinDate.getDate()
       : 1;
+
+    const existingPayroll = await databases.listDocuments(dbId, 'payroll', [
+        Query.equal('employeeId', employee.$id),
+        Query.equal('month', month)
+    ]);
+    if (existingPayroll.total > 0) {
+        await databases.deleteDocument(dbId, 'payroll', existingPayroll.documents[0].$id);
+    }
 
     const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
       Query.equal('employeeId', employee.$id),
@@ -1035,7 +1039,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     let leaveDays = 0;
     let actualWorkingDays = 0;
 
-    for (let day = 1; day <= daysInMonth; day++) {
+    for (let day = 1; day <= lastBillableDay; day++) {
       const date = `${month}-${String(day).padStart(2, '0')}`;
       const dateObj = new Date(date);
 
@@ -1109,8 +1113,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
 
     // Calculate payroll based on actual working days (pro-rated)
     const baseSalary = employee.salaryMonthly;
-    const totalWorkingDays = actualWorkingDays; // Only count days after joining
-    const dailyRate = baseSalary / daysInMonth; // Daily rate based on full month
+    const dailyRate = baseSalary / daysInMonth; 
     const paidDays = presentDays + sundayDays + holidayDays + leaveDays + (halfDays * 0.5);
     const netSalary = dailyRate * paidDays;
 
@@ -1119,7 +1122,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
       employeeId: employee.$id,
       month,
       baseSalary,
-      totalWorkingDays,
+      totalWorkingDays: actualWorkingDays,
       presentDays,
       halfDays,
       absentDays,

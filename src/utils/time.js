@@ -5,8 +5,6 @@
 
 /**
  * Convert any date to IST timezone
- * @param {Date|string} date - Date to convert
- * @returns {Date} - Date object in IST timezone
  */
 export const toIST = (date) => {
     const d = date instanceof Date ? date : new Date(date);
@@ -15,7 +13,6 @@ export const toIST = (date) => {
 
 /**
  * Get current server time in IST
- * @returns {Date} - Current IST time
  */
 export const getCurrentISTTime = () => {
     return toIST(new Date());
@@ -23,8 +20,6 @@ export const getCurrentISTTime = () => {
 
 /**
  * Format date to YYYY-MM-DD string
- * @param {Date} date - Date to format
- * @returns {string} - Formatted date string
  */
 export const formatDateToYYYYMMDD = (date) => {
     const d = toIST(date);
@@ -33,7 +28,6 @@ export const formatDateToYYYYMMDD = (date) => {
 
 /**
  * Get today's date in YYYY-MM-DD format (IST)
- * @returns {string} - Today's date
  */
 export const getTodayDateString = () => {
     return formatDateToYYYYMMDD(new Date());
@@ -41,8 +35,6 @@ export const getTodayDateString = () => {
 
 /**
  * Format date to YYYY-MM format for monthly operations
- * @param {Date} date - Date to format
- * @returns {string} - Formatted month string
  */
 export const formatDateToYYYYMM = (date) => {
     const d = toIST(date);
@@ -53,7 +45,6 @@ export const formatDateToYYYYMM = (date) => {
 
 /**
  * Get current month in YYYY-MM format
- * @returns {string} - Current month
  */
 export const getCurrentMonthString = () => {
     return formatDateToYYYYMM(new Date());
@@ -61,8 +52,6 @@ export const getCurrentMonthString = () => {
 
 /**
  * Check if date is a Sunday
- * @param {string|Date} date - Date to check
- * @returns {boolean} - True if Sunday
  */
 export const isSunday = (date) => {
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -71,8 +60,6 @@ export const isSunday = (date) => {
 
 /**
  * Get day name from date
- * @param {string|Date} date - Date to check
- * @returns {string} - Day name (Mon, Tue, etc.)
  */
 export const getDayName = (date) => {
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -81,8 +68,6 @@ export const getDayName = (date) => {
 
 /**
  * Get month name from date
- * @param {string|Date} date - Date to check
- * @returns {string} - Month name (January, February, etc.)
  */
 export const getMonthName = (date) => {
     const d = typeof date === 'string' ? new Date(date) : date;
@@ -91,8 +76,6 @@ export const getMonthName = (date) => {
 
 /**
  * Get total days in a month
- * @param {string} month - Month in YYYY-MM format
- * @returns {number} - Number of days
  */
 export const getDaysInMonth = (month) => {
     const [year, monthNum] = month.split('-').map(Number);
@@ -101,8 +84,6 @@ export const getDaysInMonth = (month) => {
 
 /**
  * Get all dates in a month as YYYY-MM-DD strings
- * @param {string} month - Month in YYYY-MM format
- * @returns {string[]} - Array of date strings
  */
 export const getAllDatesInMonth = (month) => {
     const [year, monthNum] = month.split('-').map(Number);
@@ -119,9 +100,6 @@ export const getAllDatesInMonth = (month) => {
 
 /**
  * Calculate work hours between two timestamps
- * @param {string} checkIn - ISO8601 timestamp
- * @param {string} checkOut - ISO8601 timestamp
- * @returns {number} - Hours worked (rounded to 2 decimals)
  */
 export const calculateWorkHours = (checkIn, checkOut) => {
     if (!checkIn || !checkOut) return 0;
@@ -136,7 +114,6 @@ export const calculateWorkHours = (checkIn, checkOut) => {
 
 /**
  * Check if current time is within check-in window (00:00 - 09:05 AM IST)
- * @returns {boolean} - True if check-in is allowed
  */
 export const isCheckInAllowed = () => {
     const now = getCurrentISTTime();
@@ -149,7 +126,6 @@ export const isCheckInAllowed = () => {
 
 /**
  * Check if current time is within check-out blocked window (4:00 PM - 5:25 PM IST)
- * @returns {boolean} - True if check-out is blocked
  */
 export const isCheckOutBlocked = () => {
     const now = getCurrentISTTime();
@@ -165,8 +141,6 @@ export const isCheckOutBlocked = () => {
 
 /**
  * Parse YYYY-MM-DD date string to Date object
- * @param {string} dateString - Date in YYYY-MM-DD format
- * @returns {Date} - Date object
  */
 export const parseDateString = (dateString) => {
     const [year, month, day] = dateString.split('-').map(Number);
@@ -175,9 +149,6 @@ export const parseDateString = (dateString) => {
 
 /**
  * Check if a date is before another date (date only, ignores time)
- * @param {string} date1 - YYYY-MM-DD
- * @param {string} date2 - YYYY-MM-DD
- * @returns {boolean} - True if date1 is before date2
  */
 export const isDateBefore = (date1, date2) => {
     const d1 = parseDateString(date1);
@@ -189,9 +160,6 @@ export const isDateBefore = (date1, date2) => {
 
 /**
  * Check if a date is after another date (date only, ignores time)
- * @param {string} date1 - YYYY-MM-DD
- * @param {string} date2 - YYYY-MM-DD
- * @returns {boolean} - True if date1 is after date2
  */
 export const isDateAfter = (date1, date2) => {
     const d1 = parseDateString(date1);
@@ -203,9 +171,6 @@ export const isDateAfter = (date1, date2) => {
 
 /**
  * Check if two dates are the same (date only, ignores time)
- * @param {string} date1 - YYYY-MM-DD
- * @param {string} date2 - YYYY-MM-DD
- * @returns {boolean} - True if dates are equal
  */
 export const isSameDate = (date1, date2) => {
     return date1 === date2;
@@ -213,9 +178,6 @@ export const isSameDate = (date1, date2) => {
 
 /**
  * Format ISO timestamp to readable format
- * @param {string} isoTimestamp - ISO8601 timestamp
- * @param {boolean} includeSeconds - Include seconds in output
- * @returns {string} - Formatted time (e.g., "09:00 AM" or "09:00:30 AM")
  */
 export const formatTimestamp = (isoTimestamp, includeSeconds = false) => {
     if (!isoTimestamp) return '';
@@ -235,35 +197,32 @@ export const formatTimestamp = (isoTimestamp, includeSeconds = false) => {
 };
 
 /**
- * Get checkout time category for attendance calculation
- * @param {string} checkOutTime - ISO8601 timestamp
- * @returns {string} - 'absent' | 'half_day' | 'full_day'
+ * Get checkout time category based on HOURS WORKED
+ * Rules:
+ * - Less than 4 hours = Absent
+ * - 4 to 6 hours = Half Day
+ * - More than 6 hours = Full Day
  */
-export const getCheckoutTimeCategory = (checkOutTime) => {
-    if (!checkOutTime) return 'absent';
+export const getCheckoutTimeCategory = (workHours) => {
+    // Safety check
+    if (workHours === undefined || workHours === null) return 'absent';
 
-    const checkOut = toIST(new Date(checkOutTime));
-    const hour = checkOut.getHours();
-    const minute = checkOut.getMinutes();
-
-    // Before 12:00 PM → Absent
-    if (hour < 12) {
+    // Less than 4 hours = Absent
+    if (workHours < 4) {
         return 'absent';
     }
-
-    // 12:00 PM - 3:59 PM → Half Day
-    if (hour < 16) {
+    // 4 to 6 hours = Half Day
+    else if (workHours < 6) {
         return 'half_day';
     }
-
-    // 4:00 PM or later → Full Day
-    return 'full_day';
+    // 6+ hours = Full Day
+    else {
+        return 'full_day';
+    }
 };
 
 /**
  * Count Sundays in a month
- * @param {string} month - Month in YYYY-MM format
- * @returns {number} - Number of Sundays
  */
 export const countSundaysInMonth = (month) => {
     const dates = getAllDatesInMonth(month);
