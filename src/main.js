@@ -245,7 +245,7 @@ const createAuditLog = async (databases, dbId, data) => {
 
   const hash = calculateHash({ actorId, action, targetId, payload, timestamp: new Date().toISOString() });
 
-  await databases.createDocument(dbId, 'audit_logs', ID.unique(), {
+  await databases.createDocument(dbId, 'audit', ID.unique(), {
     timestamp: new Date().toISOString(),
     actorId,
     action,
