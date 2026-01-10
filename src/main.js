@@ -977,7 +977,17 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const payrollRecords = [];
 
   for (const employee of employees) {
-    // Get attendance for this employee for the month
+    const employeeJoinDate = new Date(employee.joinDate);
+    const monthStartDate = new Date(month + '-01');
+    const monthEndDate = new Date(parseInt(year), parseInt(monthNum), 0); // Last day of month
+
+    if (employeeJoinDate > monthEndDate) {
+      continue;
+    }
+    const firstWorkingDay = employeeJoinDate > monthStartDate
+      ? employeeJoinDate.getDate()
+      : 1;
+
     const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
       Query.equal('employeeId', employee.$id),
       Query.greaterThanEqual('date', month + '-01'),
@@ -989,17 +999,24 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
       attendanceMap[att.date] = att;
     });
 
-    // Create/backfill attendance for all dates in month
     let presentDays = 0;
     let halfDays = 0;
     let absentDays = 0;
     let sundayDays = 0;
     let holidayDays = 0;
     let leaveDays = 0;
+    let actualWorkingDays = 0;
 
     for (let day = 1; day <= daysInMonth; day++) {
       const date = `${month}-${String(day).padStart(2, '0')}`;
       const dateObj = new Date(date);
+
+      if (day < firstWorkingDay) {
+        continue;
+      }
+
+      actualWorkingDays++;
+
       const isSundayDate = dateObj.getDay() === 0;
       const holidayRecord = holidays.find(h => h.date === date);
       const leaveRecord = leaves.find(l => l.employeeId === employee.$id && l.date === date);
@@ -1062,10 +1079,10 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
       }
     }
 
-    // Calculate payroll
+    // Calculate payroll based on actual working days (pro-rated)
     const baseSalary = employee.salaryMonthly;
-    const totalWorkingDays = daysInMonth; // Includes all days (Sundays + Holidays)
-    const dailyRate = baseSalary / totalWorkingDays;
+    const totalWorkingDays = actualWorkingDays; // Only count days after joining
+    const dailyRate = baseSalary / daysInMonth; // Daily rate based on full month
     const paidDays = presentDays + sundayDays + holidayDays + leaveDays + (halfDays * 0.5);
     const netSalary = dailyRate * paidDays;
 
