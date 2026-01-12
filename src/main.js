@@ -736,13 +736,21 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     isAutoCalculated: false
   };
 
-  // Recalculate work hours if times changed
   if (modifications.checkInTime || modifications.checkOutTime) {
     const newCheckIn = modifications.checkInTime || attendance.checkInTime;
     const newCheckOut = modifications.checkOutTime || attendance.checkOutTime;
-    updateData.workHours = calculateWorkHours(newCheckIn, newCheckOut);
-  }
+    const workHours = calculateWorkHours(newCheckIn, newCheckOut);
+    updateData.workHours = workHours;
 
+    if (!modifications.status) {
+        updateData.status = calculateAttendanceStatus(workHours);
+        if (attendance.status !== updateData.status) {
+            originalValues.status = attendance.status;
+            newValues.status = updateData.status;
+            fieldsChanged.push('status (auto-calc)');
+        }
+    }
+  }
   await databases.updateDocument(dbId, 'attendance', attendanceId, updateData);
 
   // Create modification record
