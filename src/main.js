@@ -691,19 +691,12 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     return { success: false, message: 'Missing required fields' };
   }
 
-  if (reason.trim().length < 10) {
-    return { success: false, message: 'Reason must be at least 10 characters' };
-  }
-
-  // Get attendance record
   const attendance = await databases.getDocument(dbId, 'attendance', attendanceId);
 
-  // Check if locked
   if (attendance.isLocked) {
     return { success: false, message: 'Attendance is locked. Unlock payroll first.' };
   }
 
-  // Store original values
   const originalValues = {};
   const newValues = {};
   const fieldsChanged = [];
@@ -730,30 +723,42 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     return { success: false, message: 'No modifications specified' };
   }
 
-  // Update attendance
   const updateData = {
     ...modifications,
     isAutoCalculated: false
   };
 
   if (modifications.checkInTime || modifications.checkOutTime) {
-    const newCheckIn = modifications.checkInTime || attendance.checkInTime;
-    const newCheckOut = modifications.checkOutTime || attendance.checkOutTime;
-    const workHours = calculateWorkHours(newCheckIn, newCheckOut);
-    updateData.workHours = workHours;
+    const inTimeStr = modifications.checkInTime || attendance.checkInTime;
+    const outTimeStr = modifications.checkOutTime || attendance.checkOutTime;
+    
+    if (inTimeStr && outTimeStr) {
+        const inDate = new Date(inTimeStr);
+        const outDate = new Date(outTimeStr);
+        
+        let diffMs = outDate - inDate;
+        if (diffMs < 0) {
+            console.log("Warning: Negative work duration");
+        }
+        
+        const workHours = Math.max(0, diffMs / (1000 * 60 * 60));
+        updateData.workHours = parseFloat(workHours.toFixed(2));
 
-    if (!modifications.status) {
-        updateData.status = calculateAttendanceStatus(workHours);
-        if (attendance.status !== updateData.status) {
-            originalValues.status = attendance.status;
-            newValues.status = updateData.status;
-            fieldsChanged.push('status (auto-calc)');
+        if (!modifications.status) {
+             if (updateData.workHours >= 6) updateData.status = 'present';
+             else if (updateData.workHours >= 4) updateData.status = 'half_day';
+             else updateData.status = 'absent';
+             
+             if (attendance.status !== updateData.status) {
+                 originalValues.status = attendance.status;
+                 newValues.status = updateData.status;
+                 fieldsChanged.push('status (auto-calc)');
+             }
         }
     }
   }
-  await databases.updateDocument(dbId, 'attendance', attendanceId, updateData);
 
-  // Create modification record
+  await databases.updateDocument(dbId, 'attendance', attendanceId, updateData);
   await databases.createDocument(dbId, 'attendance_modifications', ID.unique(), {
     attendanceId,
     employeeId: attendance.employeeId,
