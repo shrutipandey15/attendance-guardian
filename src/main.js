@@ -1353,6 +1353,21 @@ const handleGetSystemInfo = async () => {
   };
 };
 
+const handleGetEmployees = async (databases, dbId) => {
+  // Fetch up to 100 employees (add pagination if you have more)
+  const result = await databases.listDocuments(dbId, 'employees', [
+    Query.limit(100),
+    Query.orderDesc('$createdAt')
+  ]);
+
+  return {
+    success: true,
+    data: {
+      employees: result.documents
+    }
+  };
+};
+
 // ============================================
 // MAIN FUNCTION (Entry Point)
 // ============================================
@@ -1439,6 +1454,10 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
       case 'add-office-location':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleAddOfficeLocation(payload, databases, DB_ID, callerId));
+
+      case 'get-employees':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleGetEmployees(databases, DB_ID));
 
       // ============================================
       // PAYROLL ACTIONS (Admin only)
