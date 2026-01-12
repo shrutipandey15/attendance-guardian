@@ -694,30 +694,16 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
   const attendance = await databases.getDocument(dbId, 'attendance', attendanceId);
 
   if (attendance.isLocked) {
-    return { success: false, message: 'Attendance is locked. Unlock payroll first.' };
+    return { success: false, message: 'Attendance is locked.' };
   }
 
+  const oldStatus = attendance.status;
   const updateData = {
     ...modifications,
     isAutoCalculated: false
   };
 
-  const originalValues = {};
-  const newValues = {};
-  const fieldsChanged = [];
-
-  if (modifications.checkInTime !== undefined) {
-    originalValues.checkInTime = attendance.checkInTime;
-    newValues.checkInTime = modifications.checkInTime;
-    fieldsChanged.push('checkInTime');
-  }
-  if (modifications.checkOutTime !== undefined) {
-    originalValues.checkOutTime = attendance.checkOutTime;
-    newValues.checkOutTime = modifications.checkOutTime;
-    fieldsChanged.push('checkOutTime');
-  }
-
-  let finalStatus = attendance.status; 
+  let newStatus = oldStatus;
 
   if (modifications.checkInTime || modifications.checkOutTime) {
     const inTimeStr = modifications.checkInTime || attendance.checkInTime;
@@ -726,30 +712,24 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     if (inTimeStr && outTimeStr) {
         const inDate = new Date(inTimeStr);
         const outDate = new Date(outTimeStr);
-        const diffMs = outDate - inDate;  
-        const workHours = Math.max(0, diffMs / (1000 * 60 * 60));
+        const workHours = Math.max(0, (outDate - inDate) / (1000 * 60 * 60));
+        
         updateData.workHours = parseFloat(workHours.toFixed(2));
 
         if (!modifications.status) {
-             let newStatus = 'absent';
              if (updateData.workHours >= 6) newStatus = 'present';
              else if (updateData.workHours >= 4) newStatus = 'half_day';
+             else newStatus = 'absent';
              
              updateData.status = newStatus;
-             finalStatus = newStatus;
-
-             if (attendance.status !== newStatus) {
-                 originalValues.status = attendance.status;
-                 newValues.status = newStatus;
-                 fieldsChanged.push('status (auto-calc)');
-             }
         } else {
-            finalStatus = modifications.status;
+            newStatus = modifications.status;
         }
     }
   } else if (modifications.status) {
-      finalStatus = modifications.status;
+      newStatus = modifications.status;
   }
+
   await databases.updateDocument(dbId, 'attendance', attendanceId, updateData);
   await databases.createDocument(dbId, 'attendance_modifications', ID.unique(), {
     attendanceId,
@@ -757,9 +737,8 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     modifiedBy: callerId,
     modifiedAt: new Date().toISOString(),
     reason,
-    fieldChanged: fieldsChanged.join(','),
-    originalValue: JSON.stringify(originalValues),
-    newValue: JSON.stringify(newValues)
+    originalValue: JSON.stringify({ status: oldStatus }),
+    newValue: JSON.stringify({ status: newStatus })
   });
 
   await createAuditLog(databases, dbId, {
@@ -770,48 +749,57 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     payload: { employeeId: attendance.employeeId, reason }
   });
 
-  const month = attendance.date.substring(0, 7); 
-  const payrollList = await databases.listDocuments(dbId, 'payroll', [
-    Query.equal('employeeId', attendance.employeeId),
-    Query.equal('month', month),
-    Query.limit(1)
-  ]);
+  if (oldStatus !== newStatus) {
+      const month = attendance.date.substring(0, 7);
+      
+      const payrollList = await databases.listDocuments(dbId, 'payroll', [
+        Query.equal('employeeId', attendance.employeeId),
+        Query.equal('month', month),
+        Query.limit(1)
+      ]);
 
-  if (payrollList.total > 0) {
-    const payrollDoc = payrollList.documents[0];
+      if (payrollList.total > 0) {
+        const payrollDoc = payrollList.documents[0];
+        
+        const payrollUpdate = {
+            presentDays: payrollDoc.presentDays,
+            halfDays: payrollDoc.halfDays,
+            absentDays: payrollDoc.absentDays,
+            sundayDays: payrollDoc.sundayDays,
+            holidayDays: payrollDoc.holidayDays,
+            leaveDays: payrollDoc.leaveDays
+        };
 
-    const allAttendance = await databases.listDocuments(dbId, 'attendance', [
-      Query.equal('employeeId', attendance.employeeId),
-      Query.startsWith('date', month),
-      Query.limit(100)
-    ]);
+        if (oldStatus === 'present') payrollUpdate.presentDays--;
+        else if (oldStatus === 'half_day') payrollUpdate.halfDays--;
+        else if (oldStatus === 'absent') payrollUpdate.absentDays--;
+        else if (oldStatus === 'sunday') payrollUpdate.sundayDays--;
+        else if (oldStatus === 'holiday') payrollUpdate.holidayDays--;
+        else if (oldStatus === 'leave') payrollUpdate.leaveDays--;
 
-    const statuses = allAttendance.documents.map(doc => {
-        if (doc.$id === attendanceId) return finalStatus;
-        return doc.status;
-    });
-    const pDays = statuses.filter(s => s === 'present').length;
-    const hDays = statuses.filter(s => s === 'half_day').length;
-    const aDays = statuses.filter(s => s === 'absent').length;
-    const sDays = statuses.filter(s => s === 'sunday').length;
-    const holDays = statuses.filter(s => s === 'holiday').length;
-    const lDays = statuses.filter(s => s === 'leave').length;
-    const paidDays = pDays + sDays + holDays + lDays + (hDays * 0.5);
-    const dailyRate = payrollDoc.dailyRate || 0;
-    const newNetSalary = dailyRate * paidDays;
+        if (newStatus === 'present') payrollUpdate.presentDays++;
+        else if (newStatus === 'half_day') payrollUpdate.halfDays++;
+        else if (newStatus === 'absent') payrollUpdate.absentDays++;
+        else if (newStatus === 'sunday') payrollUpdate.sundayDays++;
+        else if (newStatus === 'holiday') payrollUpdate.holidayDays++;
+        else if (newStatus === 'leave') payrollUpdate.leaveDays++;
 
-    await databases.updateDocument(dbId, 'payroll', payrollDoc.$id, {
-      presentDays: pDays,
-      halfDays: hDays,
-      absentDays: aDays,
-      sundayDays: sDays,
-      holidayDays: holDays,
-      leaveDays: lDays,
-      netSalary: newNetSalary
-    });
+        Object.keys(payrollUpdate).forEach(key => {
+            if (payrollUpdate[key] < 0) payrollUpdate[key] = 0;
+        });
+
+        const paidDays = payrollUpdate.presentDays + 
+                         payrollUpdate.sundayDays + 
+                         payrollUpdate.holidayDays + 
+                         payrollUpdate.leaveDays + 
+                         (payrollUpdate.halfDays * 0.5);
+                         
+        payrollUpdate.netSalary = payrollDoc.dailyRate * paidDays;
+        await databases.updateDocument(dbId, 'payroll', payrollDoc.$id, payrollUpdate);
+      }
   }
 
-  return { success: true, message: 'Updated and recalculated successfully' };
+  return { success: true, message: 'Updated successfully' };
 };
 
 /**
