@@ -1387,6 +1387,40 @@ const handleGetEmployees = async (databases, dbId) => {
   };
 };
 
+/**
+ * Handle get audit logs
+ */
+const handleGetAuditLogs = async (payload, databases, dbId) => {
+  const { filters, limit, offset } = payload;
+  
+  const queries = [
+    Query.orderDesc('timestamp'),
+    Query.limit(limit || 50),
+    Query.offset(offset || 0)
+  ];
+
+  if (filters) {
+      if (filters.action) {
+          queries.push(Query.equal('action', filters.action));
+      }
+      if (filters.employeeId) {
+          queries.push(Query.equal('actorId', filters.employeeId));
+      }
+  }
+
+  const result = await databases.listDocuments(dbId, 'audit', queries);
+
+  return {
+    success: true,
+    data: {
+      logs: result.documents,
+      total: result.total,
+      limit: limit || 50,
+      offset: offset || 0
+    }
+  };
+};
+
 // ============================================
 // MAIN FUNCTION (Entry Point)
 // ============================================
@@ -1497,6 +1531,10 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
       case 'get-payroll-report':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleGetPayrollReport(payload, databases, DB_ID));
+      
+      case 'get-audit-logs':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleGetAuditLogs(payload, databases, DB_ID));
 
       // ============================================
       // UTILITY ACTIONS (Public)
