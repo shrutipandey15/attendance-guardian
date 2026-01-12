@@ -1433,7 +1433,6 @@ const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
   }
 
   const currentEmp = await databases.getDocument(dbId, 'employees', employeeId);
-
   const updates = {};
   if (data.name) updates.name = data.name;
   if (data.email) updates.email = data.email;
@@ -1442,6 +1441,49 @@ const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
   if (data.isActive !== undefined) updates.isActive = data.isActive;
 
   await databases.updateDocument(dbId, 'employees', employeeId, updates);
+  const now = getNowIST();
+  const currentMonth = formatMonth(now);
+
+  const payrollList = await databases.listDocuments(dbId, 'payroll', [
+    Query.equal('employeeId', employeeId),
+    Query.equal('month', currentMonth),
+    Query.limit(1)
+  ]);
+
+  if (payrollList.total > 0) {
+    const payrollDoc = payrollList.documents[0];
+    const payrollUpdates = {};
+    let shouldUpdatePayroll = false;
+
+    if (updates.name && updates.name !== payrollDoc.employeeName) {
+        payrollUpdates.employeeName = updates.name;
+        shouldUpdatePayroll = true;
+    }
+
+    if (updates.salaryMonthly && updates.salaryMonthly !== payrollDoc.baseSalary) {
+        const newSalary = updates.salaryMonthly;
+        const [year, monthNum] = currentMonth.split('-');
+        const daysInMonth = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
+        const newDailyRate = newSalary / daysInMonth;
+        const paidDays = payrollDoc.presentDays + 
+                         payrollDoc.sundayDays + 
+                         payrollDoc.holidayDays + 
+                         payrollDoc.leaveDays + 
+                         (payrollDoc.halfDays * 0.5);
+                         
+        const newNetSalary = newDailyRate * paidDays;
+
+        payrollUpdates.baseSalary = newSalary;
+        payrollUpdates.dailyRate = newDailyRate;
+        payrollUpdates.netSalary = newNetSalary;
+        shouldUpdatePayroll = true;
+    }
+
+    if (shouldUpdatePayroll) {
+        await databases.updateDocument(dbId, 'payroll', payrollDoc.$id, payrollUpdates);
+    }
+  }
+
   await createAuditLog(databases, dbId, {
     actorId: callerId,
     action: 'employee-updated',
@@ -1449,12 +1491,8 @@ const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
     targetType: 'employee',
     payload: {
       updatedFields: Object.keys(updates),
-      oldValues: {
-        salary: currentEmp.salaryMonthly,
-        name: currentEmp.name,
-        isActive: currentEmp.isActive
-      },
-      newValues: updates
+      nameChanged: updates.name !== currentEmp.name,
+      salaryChanged: updates.salaryMonthly !== currentEmp.salaryMonthly
     }
   });
 
