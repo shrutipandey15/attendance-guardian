@@ -716,11 +716,8 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     newValues.checkOutTime = modifications.checkOutTime;
     fieldsChanged.push('checkOutTime');
   }
-  if (modifications.status !== undefined) {
-    originalValues.status = attendance.status;
-    newValues.status = modifications.status;
-    fieldsChanged.push('status');
-  }
+
+  let finalStatus = attendance.status; 
 
   if (modifications.checkInTime || modifications.checkOutTime) {
     const inTimeStr = modifications.checkInTime || attendance.checkInTime;
@@ -729,7 +726,7 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     if (inTimeStr && outTimeStr) {
         const inDate = new Date(inTimeStr);
         const outDate = new Date(outTimeStr);
-        const diffMs = outDate - inDate;
+        const diffMs = outDate - inDate;  
         const workHours = Math.max(0, diffMs / (1000 * 60 * 60));
         updateData.workHours = parseFloat(workHours.toFixed(2));
 
@@ -739,16 +736,20 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
              else if (updateData.workHours >= 4) newStatus = 'half_day';
              
              updateData.status = newStatus;
+             finalStatus = newStatus;
 
              if (attendance.status !== newStatus) {
                  originalValues.status = attendance.status;
                  newValues.status = newStatus;
                  fieldsChanged.push('status (auto-calc)');
              }
+        } else {
+            finalStatus = modifications.status;
         }
     }
+  } else if (modifications.status) {
+      finalStatus = modifications.status;
   }
-
   await databases.updateDocument(dbId, 'attendance', attendanceId, updateData);
   await databases.createDocument(dbId, 'attendance_modifications', ID.unique(), {
     attendanceId,
@@ -766,14 +767,7 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
     action: AUDIT_ACTIONS.ATTENDANCE_MODIFIED,
     targetId: attendanceId,
     targetType: 'attendance',
-    payload: {
-      employeeId: attendance.employeeId,
-      date: attendance.date,
-      reason,
-      fieldsChanged,
-      originalValues,
-      newValues
-    }
+    payload: { employeeId: attendance.employeeId, reason }
   });
 
   const month = attendance.date.substring(0, 7); 
@@ -792,18 +786,16 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
       Query.limit(100)
     ]);
 
-    let pDays = 0, hDays = 0, aDays = 0, sDays = 0, holDays = 0, lDays = 0;
-    
-    allAttendance.documents.forEach(doc => {
-      const status = (doc.$id === attendanceId) ? (updateData.status || doc.status) : doc.status;
-
-      if (status === 'present') pDays++;
-      else if (status === 'half_day') hDays++;
-      else if (status === 'absent') aDays++;
-      else if (status === 'sunday') sDays++;
-      else if (status === 'holiday') holDays++;
-      else if (status === 'leave') lDays++;
+    const statuses = allAttendance.documents.map(doc => {
+        if (doc.$id === attendanceId) return finalStatus;
+        return doc.status;
     });
+    const pDays = statuses.filter(s => s === 'present').length;
+    const hDays = statuses.filter(s => s === 'half_day').length;
+    const aDays = statuses.filter(s => s === 'absent').length;
+    const sDays = statuses.filter(s => s === 'sunday').length;
+    const holDays = statuses.filter(s => s === 'holiday').length;
+    const lDays = statuses.filter(s => s === 'leave').length;
     const paidDays = pDays + sDays + holDays + lDays + (hDays * 0.5);
     const dailyRate = payrollDoc.dailyRate || 0;
     const newNetSalary = dailyRate * paidDays;
