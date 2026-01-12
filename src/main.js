@@ -381,7 +381,7 @@ const handleCheckIn = async (payload, databases, dbId) => {
     checkInLng: location?.longitude || null,
     checkInAccuracy: location?.accuracy || null,
     isLocationFlagged: locationResult.flagged,
-    isAutoCalculated: true,
+    isAutoCalculated: false,
     isLocked: false,
     notes: locationResult.flagged ? locationResult.reason : ''
   };
