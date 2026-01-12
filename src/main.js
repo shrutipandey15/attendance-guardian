@@ -1421,6 +1421,46 @@ const handleGetAuditLogs = async (payload, databases, dbId) => {
   };
 };
 
+/**
+ * Handle update employee
+ * Allows editing salary, name, and status
+ */
+const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
+  const { employeeId, data } = payload;
+
+  if (!employeeId || !data) {
+    return { success: false, message: 'Missing required fields' };
+  }
+
+  const currentEmp = await databases.getDocument(dbId, 'employees', employeeId);
+
+  const updates = {};
+  if (data.name) updates.name = data.name;
+  if (data.email) updates.email = data.email;
+  if (data.salary) updates.salaryMonthly = parseInt(data.salary);
+  if (data.joinDate) updates.joinDate = data.joinDate;
+  if (data.isActive !== undefined) updates.isActive = data.isActive;
+
+  await databases.updateDocument(dbId, 'employees', employeeId, updates);
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: 'employee-updated',
+    targetId: employeeId,
+    targetType: 'employee',
+    payload: {
+      updatedFields: Object.keys(updates),
+      oldValues: {
+        salary: currentEmp.salaryMonthly,
+        name: currentEmp.name,
+        isActive: currentEmp.isActive
+      },
+      newValues: updates
+    }
+  });
+
+  return { success: true, message: 'Employee updated successfully' };
+};
+
 // ============================================
 // MAIN FUNCTION (Entry Point)
 // ============================================
@@ -1511,6 +1551,10 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
       case 'get-employees':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleGetEmployees(databases, DB_ID));
+      
+      case 'update-employee':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleUpdateEmployee(payload, databases, DB_ID, callerId));
 
       // ============================================
       // PAYROLL ACTIONS (Admin only)
