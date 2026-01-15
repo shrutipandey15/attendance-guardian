@@ -362,7 +362,7 @@ const handleCheckIn = async (payload, databases, dbId) => {
     status: ATTENDANCE_STATUS.ABSENT, // Will be updated on check-out
     checkInTime,
     checkInLat: location?.latitude || null,
-    checkInLng: location?.longitude || null,
+    checkInlng: location?.longitude || null,
     checkInAccuracy: location?.accuracy || null,
     isLocationFlagged: locationResult.flagged,
     isAutoCalculated: false,
@@ -459,7 +459,7 @@ const handleCheckOut = async (payload, databases, dbId) => {
   await databases.updateDocument(dbId, 'attendance', attendance.$id, {
     checkOutTime,
     checkOutLat: location?.latitude || null,
-    checkOutLng: location?.longitude || null,
+    checkOutlng: location?.longitude || null,
     checkOutAccuracy: location?.accuracy || null,
     workHours,
     status

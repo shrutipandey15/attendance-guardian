@@ -179,7 +179,7 @@ describe('Check-In Logic', () => {
             employeeId: 'emp-123',
             status: 'absent', // Will be updated on checkout
             checkInLat: 12.9716,
-            checkInLng: 77.5946
+            checkInlng: 77.5946
         });
     });
 
