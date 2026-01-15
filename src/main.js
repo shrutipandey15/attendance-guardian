@@ -459,7 +459,7 @@ const handleCheckOut = async (payload, databases, dbId) => {
   await databases.updateDocument(dbId, 'attendance', attendance.$id, {
     checkOutTime,
     checkOutLat: location?.latitude || null,
-    checkOutlng: location?.longitude || null,
+    checkOutLng: location?.longitude || null,
     checkOutAccuracy: location?.accuracy || null,
     workHours,
     status
