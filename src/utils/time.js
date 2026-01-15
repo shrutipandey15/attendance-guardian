@@ -113,15 +113,10 @@ export const calculateWorkHours = (checkIn, checkOut) => {
 };
 
 /**
- * Check if current time is within check-in window (00:00 - 09:05 AM IST)
+ * Check if current time is within check-in window (always allowed - restriction removed)
  */
 export const isCheckInAllowed = () => {
-    const now = getCurrentISTTime();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-
-    // Before 9:05 AM
-    return hour < 9 || (hour === 9 && minute <= 5);
+    return true;
 };
 
 /**
@@ -201,7 +196,7 @@ export const formatTimestamp = (isoTimestamp, includeSeconds = false) => {
  * Rules:
  * - Less than 4 hours = Absent
  * - 4 to 6 hours = Half Day
- * - More than 6 hours = Full Day
+ * - More than 6 hours = Present
  */
 export const getCheckoutTimeCategory = (workHours) => {
     // Safety check
@@ -215,9 +210,9 @@ export const getCheckoutTimeCategory = (workHours) => {
     else if (workHours < 6) {
         return 'half_day';
     }
-    // 6+ hours = Full Day
+    // 6+ hours = Present
     else {
-        return 'full_day';
+        return 'present';
     }
 };
 
