@@ -5,8 +5,7 @@ import forge from 'node-forge';
 // CONSTANTS & CONFIGURATION
 // ============================================
 
-const CHECK_IN_CUTOFF_HOUR = 9;
-const CHECK_IN_CUTOFF_MINUTE = 5;
+// Check-in time restriction removed - employees can check in anytime
 const CHECKOUT_BLOCK_START_HOUR = 16; // 4:00 PM
 const CHECKOUT_BLOCK_END_HOUR = 17; // 5:25 PM
 const CHECKOUT_BLOCK_END_MINUTE = 25;
@@ -71,17 +70,10 @@ const formatMonth = (date) => {
 };
 
 /**
- * Check if check-in is allowed (before 9:05 AM IST)
+ * Check if check-in is allowed (always allowed - time restriction removed)
  */
 const isCheckInAllowed = () => {
-  const now = getNowIST();
-  const hour = now.getHours();
-  const minute = now.getMinutes();
-
-  if (hour < CHECK_IN_CUTOFF_HOUR) return true;
-  if (hour === CHECK_IN_CUTOFF_HOUR && minute <= CHECK_IN_CUTOFF_MINUTE) return true;
-
-  return false;
+  return true;
 };
 
 /**
@@ -318,19 +310,11 @@ const getActiveOfficeLocations = async (databases, dbId) => {
  * Handle check-in
  */
 const handleCheckIn = async (payload, databases, dbId) => {
-  // Validate time window
-  if (!isCheckInAllowed()) {
-    return {
-      success: false,
-      message: '⛔ Check-in closed! Check-in is only allowed until 9:05 AM.'
-    };
-  }
-
   const { email, signature, dataToVerify, location } = payload;
 
   // Validate required fields
   if (!email || !signature || !dataToVerify) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Please provide email and credentials' };
   }
 
   // Get employee
@@ -338,13 +322,13 @@ const handleCheckIn = async (payload, databases, dbId) => {
 
   // Check if device is registered
   if (!employee.devicePublicKey) {
-    return { success: false, message: 'Device not registered. Please register your device first.' };
+    return { success: false, message: 'Device not registered. Please register first.' };
   }
 
   // Verify signature
   const isValidSignature = verifySignature(employee.devicePublicKey, dataToVerify, signature);
   if (!isValidSignature) {
-    return { success: false, message: 'Invalid signature. Device not authorized.' };
+    return { success: false, message: 'Device not authorized. Contact admin.' };
   }
 
   // Check if already checked in today
@@ -352,7 +336,7 @@ const handleCheckIn = async (payload, databases, dbId) => {
   const existingAttendance = await getAttendanceByDate(databases, dbId, employee.$id, today);
 
   if (existingAttendance && existingAttendance.checkInTime) {
-    return { success: false, message: 'You have already checked in today.' };
+    return { success: false, message: 'Already checked in today' };
   }
 
   // Validate location
@@ -430,7 +414,7 @@ const handleCheckOut = async (payload, databases, dbId) => {
   if (!isCheckOutAllowed()) {
     return {
       success: false,
-      message: '⛔ Check-out disabled! Please try again after 5:25 PM.'
+      message: 'Check-out unavailable between 4:00-5:25 PM'
     };
   }
 
@@ -438,7 +422,7 @@ const handleCheckOut = async (payload, databases, dbId) => {
 
   // Validate required fields
   if (!email || !signature || !dataToVerify) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Please provide email and credentials' };
   }
 
   // Get employee
@@ -446,13 +430,13 @@ const handleCheckOut = async (payload, databases, dbId) => {
 
   // Check if device is registered
   if (!employee.devicePublicKey) {
-    return { success: false, message: 'Device not registered. Please register your device first.' };
+    return { success: false, message: 'Device not registered. Please register first.' };
   }
 
   // Verify signature
   const isValidSignature = verifySignature(employee.devicePublicKey, dataToVerify, signature);
   if (!isValidSignature) {
-    return { success: false, message: 'Invalid signature. Device not authorized.' };
+    return { success: false, message: 'Device not authorized. Contact admin.' };
   }
 
   // Check if checked in today
@@ -460,11 +444,11 @@ const handleCheckOut = async (payload, databases, dbId) => {
   const attendance = await getAttendanceByDate(databases, dbId, employee.$id, today);
 
   if (!attendance || !attendance.checkInTime) {
-    return { success: false, message: 'No check-in found for today. Please check in first.' };
+    return { success: false, message: 'Please check in first' };
   }
 
   if (attendance.checkOutTime) {
-    return { success: false, message: 'You have already checked out today.' };
+    return { success: false, message: 'Already checked out today' };
   }
 
   // Record check-out
@@ -519,7 +503,7 @@ const handleRegisterDevice = async (payload, databases, dbId) => {
   const { email, publicKey, deviceFingerprint } = payload;
 
   if (!email || !publicKey) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Email and public key required' };
   }
 
   // Get employee
@@ -527,14 +511,14 @@ const handleRegisterDevice = async (payload, databases, dbId) => {
 
   // Check if device already registered
   if (employee.devicePublicKey) {
-    return { success: false, message: 'Device already registered. Contact admin to reset.' };
+    return { success: false, message: 'Device already registered. Contact admin.' };
   }
 
   // Validate public key format
   try {
     forge.pki.publicKeyFromPem(publicKey);
   } catch (err) {
-    return { success: false, message: 'Invalid public key format' };
+    return { success: false, message: 'Invalid key format' };
   }
 
   // Update employee with device info
@@ -630,7 +614,7 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
   const { email, password, name, salary, joinDate } = payload.data || {};
 
   if (!email || !password || !name) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Name, email and password required' };
   }
 
   let newUser;
@@ -688,13 +672,13 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
   const { attendanceId, reason, modifications } = payload;
 
   if (!attendanceId || !reason || !modifications) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Attendance ID, reason and changes required' };
   }
 
   const attendance = await databases.getDocument(dbId, 'attendance', attendanceId);
 
   if (attendance.isLocked) {
-    return { success: false, message: 'Attendance is locked.' };
+    return { success: false, message: 'Record locked. Unlock payroll first.' };
   }
 
   const oldStatus = attendance.status;
@@ -799,7 +783,7 @@ const handleModifyAttendance = async (payload, databases, dbId, callerId) => {
       }
   }
 
-  return { success: true, message: 'Updated successfully' };
+  return { success: true, message: 'Attendance updated' };
 };
 
 /**
@@ -809,7 +793,7 @@ const handleResetDevice = async (payload, databases, dbId, callerId) => {
   const { employeeId, reason } = payload;
 
   if (!employeeId || !reason) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Employee ID and reason required' };
   }
 
   // Get employee
@@ -837,7 +821,7 @@ const handleResetDevice = async (payload, databases, dbId, callerId) => {
 
   return {
     success: true,
-    message: 'Device reset successfully. Employee must re-register on next login.'
+    message: 'Device reset. Employee must re-register.'
   };
 };
 
@@ -848,7 +832,7 @@ const handleCreateHoliday = async (payload, databases, dbId, callerId) => {
   const { date, name, description } = payload;
 
   if (!date || !name) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Date and name required' };
   }
 
   try {
@@ -895,7 +879,7 @@ const handleDeleteHoliday = async (payload, databases, dbId, callerId) => {
   const { holidayId } = payload;
 
   if (!holidayId) {
-    return { success: false, message: 'Missing holiday ID' };
+    return { success: false, message: 'Holiday ID required' };
   }
 
   // Get holiday
@@ -930,7 +914,7 @@ const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
   const { name, latitude, longitude, radiusMeters } = payload;
 
   if (!name || latitude === undefined || longitude === undefined) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Name and coordinates required' };
   }
 
   const location = await databases.createDocument(dbId, 'office_locations', ID.unique(), {
@@ -964,7 +948,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const { month } = payload;
 
   if (!month) {
-    return { success: false, message: 'Missing month parameter (format: YYYY-MM)' };
+    return { success: false, message: 'Month required (YYYY-MM)' };
   }
 
   const existingPayrollResult = await databases.listDocuments(dbId, 'payroll', [
@@ -975,7 +959,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   if (existingPayrollResult.total > 0) {
     return {
       success: false,
-      message: `Payroll already generated for ${month}. Unlock it first to regenerate.`
+      message: `Payroll exists for ${month}. Delete to regenerate.`
     };
   }
 
@@ -1163,11 +1147,11 @@ const handleUnlockPayroll = async (payload, databases, dbId, callerId) => {
   const { month, reason } = payload;
 
   if (!month || !reason) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Month and reason required' };
   }
 
   if (reason.trim().length < 10) {
-    return { success: false, message: 'Reason must be at least 10 characters' };
+    return { success: false, message: 'Reason must be at least 10 chars' };
   }
 
   // Get all payroll records for the month
@@ -1217,7 +1201,7 @@ const handleUnlockPayroll = async (payload, databases, dbId, callerId) => {
 
   return {
     success: true,
-    message: `Payroll unlocked for ${month}. Attendance can now be modified.`
+    message: `Payroll unlocked for ${month}`
   };
 };
 
@@ -1228,11 +1212,11 @@ const handleDeletePayroll = async (payload, databases, dbId, callerId) => {
   const { month, reason } = payload;
 
   if (!month || !reason) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Month and reason required' };
   }
 
   if (reason.trim().length < 10) {
-    return { success: false, message: 'Reason must be at least 10 characters' };
+    return { success: false, message: 'Reason must be at least 10 chars' };
   }
 
   const payrollResult = await databases.listDocuments(dbId, 'payroll', [
@@ -1278,7 +1262,7 @@ const handleDeletePayroll = async (payload, databases, dbId, callerId) => {
 
   return {
     success: true,
-    message: `Deleted ${deletedCount} payroll records and ${deletedAttendanceCount} auto-calculated attendance records for ${month}. You can now regenerate payroll.`,
+    message: `Deleted payroll for ${month}`,
     data: {
       deletedPayrollRecords: deletedCount,
       deletedAttendanceRecords: deletedAttendanceCount
@@ -1429,7 +1413,7 @@ const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
   const { employeeId, data } = payload;
 
   if (!employeeId || !data) {
-    return { success: false, message: 'Missing required fields' };
+    return { success: false, message: 'Employee ID and data required' };
   }
 
   const currentEmp = await databases.getDocument(dbId, 'employees', employeeId);
@@ -1506,7 +1490,7 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
   } else {
       if (!DB_ID) {
         error('Missing APPWRITE_DB_ID environment variable');
-        return res.json({ success: false, message: 'Server configuration error' });
+        return res.json({ success: false, message: 'Server config error. Contact admin.' });
       }
 
       client = new Client()
@@ -1629,7 +1613,7 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
 
     return res.json({
       success: false,
-      message: err.message || 'Server error occurred'
+      message: err.message || 'Something went wrong. Try again.'
     });
   }
 };

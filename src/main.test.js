@@ -135,6 +135,31 @@ describe('Check-In Logic', () => {
         // 9:00 AM IST = 3:30 AM UTC
         vi.setSystemTime(new Date('2024-01-15T03:30:00Z'));
 
+        // Mock different responses for different collections
+        mockListDocuments.mockImplementation((dbId, collection) => {
+            if (collection === 'employees') {
+                return Promise.resolve({
+                    total: 1,
+                    documents: [{
+                        $id: 'emp-123',
+                        name: 'John Doe',
+                        email: 'john@example.com',
+                        devicePublicKey: '-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----',
+                        deviceFingerprint: 'Mozilla/5.0',
+                        salaryMonthly: 8000,
+                        isActive: true
+                    }]
+                });
+            }
+            if (collection === 'attendance') {
+                return Promise.resolve({ total: 0, documents: [] }); // No existing attendance
+            }
+            if (collection === 'office_locations') {
+                return Promise.resolve({ total: 0, documents: [] }); // No office locations
+            }
+            return Promise.resolve({ total: 0, documents: [] });
+        });
+
         const { result } = await run({
             action: 'check-in',
             email: 'john@example.com',
@@ -145,17 +170,17 @@ describe('Check-In Logic', () => {
 
         expect(result.success).toBe(true);
         expect(result.message).toContain('Check-in recorded successfully');
-        expect(mockCreateDocument).toHaveBeenCalledWith(
-            'test-db-id',
-            'attendance',
-            'unique-id-12345',
-            expect.objectContaining({
-                employeeId: 'emp-123',
-                status: 'absent', // Will be updated on checkout
-                checkInLat: 12.9716,
-                checkInLng: 77.5946
-            })
+        // Check that attendance document was created
+        const attendanceCall = mockCreateDocument.mock.calls.find(
+            call => call[1] === 'attendance'
         );
+        expect(attendanceCall).toBeTruthy();
+        expect(attendanceCall[3]).toMatchObject({
+            employeeId: 'emp-123',
+            status: 'absent', // Will be updated on checkout
+            checkInLat: 12.9716,
+            checkInLng: 77.5946
+        });
     });
 
     it('Should ALLOW check-in at 9:05 AM IST (last minute)', async () => {
@@ -172,7 +197,7 @@ describe('Check-In Logic', () => {
         expect(result.success).toBe(true);
     });
 
-    it('Should BLOCK check-in at 9:06 AM IST', async () => {
+    it('Should ALLOW check-in at 9:06 AM IST (time restriction removed)', async () => {
         // 9:06 AM IST = 3:36 AM UTC
         vi.setSystemTime(new Date('2024-01-15T03:36:00Z'));
 
@@ -180,12 +205,12 @@ describe('Check-In Logic', () => {
             action: 'check-in',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'test-data',
+            location: { latitude: 12.9716, longitude: 77.5946, accuracy: 10 }
         });
 
-        expect(result.success).toBe(false);
-        expect(result.message).toContain('Check-in closed');
-        expect(result.message).toContain('9:05 AM');
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('Check-in recorded successfully');
     });
 
     it('Should reject check-in with invalid signature', async () => {
@@ -199,7 +224,7 @@ describe('Check-In Logic', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('Invalid signature');
+        expect(result.message).toContain('not authorized');
     });
 
     it('Should reject check-in if device not registered', async () => {
@@ -257,7 +282,7 @@ describe('Check-In Logic', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('already checked in');
+        expect(result.message).toContain('Already checked in');
     });
 });
 
@@ -295,8 +320,8 @@ describe('Check-Out Logic', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('Check-out disabled');
-        expect(result.message).toContain('5:25 PM');
+        expect(result.message).toContain('Check-out unavailable');
+        expect(result.message).toContain('4:00-5:25');
     });
 
     it('Should BLOCK check-out at 5:00 PM IST', async () => {
@@ -311,7 +336,7 @@ describe('Check-Out Logic', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('Check-out disabled');
+        expect(result.message).toContain('Check-out unavailable');
     });
 
     it('Should ALLOW check-out at 5:26 PM IST', async () => {
@@ -485,7 +510,7 @@ describe('Check-Out Logic', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('No check-in found');
+        expect(result.message).toContain('check in first');
     });
 });
 
@@ -564,7 +589,7 @@ describe('Device Registration', () => {
         });
 
         expect(result.success).toBe(false);
-        expect(result.message).toContain('Invalid public key');
+        expect(result.message).toContain('Invalid key format');
     });
 });
 
