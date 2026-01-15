@@ -1372,35 +1372,106 @@ const handleGetEmployees = async (databases, dbId) => {
 };
 
 /**
- * Handle get audit logs
+ * Handle get all attendance (for admin attendance sheet)
+ * Returns attendance for all employees for a specific date or date range
  */
-const handleGetAuditLogs = async (payload, databases, dbId) => {
-  const { filters, limit, offset } = payload;
-  
-  const queries = [
-    Query.orderDesc('timestamp'),
-    Query.limit(limit || 50),
-    Query.offset(offset || 0)
-  ];
+const handleGetAllAttendance = async (payload, databases, dbId) => {
+  const { date, startDate, endDate } = payload;
+  const employeesResult = await databases.listDocuments(dbId, 'employees', [
+    Query.equal('isActive', true),
+    Query.limit(100)
+  ]);
 
-  if (filters) {
-      if (filters.action) {
-          queries.push(Query.equal('action', filters.action));
-      }
-      if (filters.employeeId) {
-          queries.push(Query.equal('actorId', filters.employeeId));
-      }
+  const employees = employeesResult.documents;
+  const employeeMap = {};
+  employees.forEach(emp => {
+    employeeMap[emp.$id] = { name: emp.name, email: emp.email };
+  });
+
+  let queryStartDate, queryEndDate;
+
+  if (date) {
+    queryStartDate = date;
+    queryEndDate = date;
+  } else if (startDate && endDate) {
+    queryStartDate = startDate;
+    queryEndDate = endDate;
+  } else {
+    queryStartDate = formatDate(getNowIST());
+    queryEndDate = queryStartDate;
   }
 
-  const result = await databases.listDocuments(dbId, 'audit', queries);
+  const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
+    Query.greaterThanEqual('date', queryStartDate),
+    Query.lessThanEqual('date', queryEndDate),
+    Query.orderAsc('date'),
+    Query.limit(500)
+  ]);
+
+  const attendanceByDate = {};
+
+  attendanceResult.documents.forEach(att => {
+    if (!attendanceByDate[att.date]) {
+      attendanceByDate[att.date] = {};
+    }
+    attendanceByDate[att.date][att.employeeId] = {
+      id: att.$id,
+
+      status: att.status,
+      checkInTime: att.checkInTime,
+      checkOutTime: att.checkOutTime,
+      workHours: att.workHours || 0,
+      isLocked: att.isLocked,
+      notes: att.notes || ''
+    };
+  });
+
+  const records = [];
+  const current = new Date(queryStartDate);
+  const end = new Date(queryEndDate);
+
+  while (current <= end) {
+    const dateStr = formatDate(current);
+    const dayAttendance = attendanceByDate[dateStr] || {};
+
+    const dayRecord = {
+      date: dateStr,
+      day: current.toLocaleDateString('en-US', { weekday: 'short' }),
+      isSunday: current.getDay() === 0,
+      employees: employees.map(emp => ({
+        employeeId: emp.$id,
+        employeeName: emp.name,
+        ...(dayAttendance[emp.$id] || {
+          id: null,
+          status: current.getDay() === 0 ? 'sunday' : null,
+          checkInTime: null,
+          checkOutTime: null,
+          workHours: 0,
+          isLocked: false,
+          notes: ''
+        })
+      }))
+    };
+
+    records.push(dayRecord);
+    current.setDate(current.getDate() + 1);
+  }
+  const today = formatDate(getNowIST());
+  const todayAttendance = attendanceByDate[today] || {};
+
+  const summary = {
+    totalEmployees: employees.length,
+    checkedIn: Object.values(todayAttendance).filter(a => a.checkInTime).length,
+    checkedOut: Object.values(todayAttendance).filter(a => a.checkOutTime).length,
+    notYetIn: employees.length - Object.values(todayAttendance).filter(a => a.checkInTime).length
+  };
 
   return {
     success: true,
     data: {
-      logs: result.documents,
-      total: result.total,
-      limit: limit || 50,
-      offset: offset || 0
+      records,
+      summary,
+      employees: employees.map(e => ({ id: e.$id, name: e.name, email: e.email }))
     }
   };
 };
@@ -1584,10 +1655,10 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
       case 'get-payroll-report':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleGetPayrollReport(payload, databases, DB_ID));
-      
-      case 'get-audit-logs':
+
+      case 'get-all-attendance':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
-        return res.json(await handleGetAuditLogs(payload, databases, DB_ID));
+        return res.json(await handleGetAllAttendance(payload, databases, DB_ID));
 
       // ============================================
       // UTILITY ACTIONS (Public)
