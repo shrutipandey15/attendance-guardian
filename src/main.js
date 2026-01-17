@@ -852,7 +852,7 @@ const handleResetDevice = async (payload, databases, dbId, callerId) => {
  * Handle create holiday
  */
 const handleCreateHoliday = async (payload, databases, dbId, callerId) => {
-  const { date, name, description } = payload;
+  const { date, name } = payload;
 
   if (!date || !name) {
     return { success: false, message: 'Date and name required' };
@@ -862,8 +862,7 @@ const handleCreateHoliday = async (payload, databases, dbId, callerId) => {
     // Create holiday
     const holiday = await databases.createDocument(dbId, 'holidays', ID.unique(), {
       date,
-      name,
-      description: description || null
+      name
     });
 
     // Create audit log
@@ -875,7 +874,6 @@ const handleCreateHoliday = async (payload, databases, dbId, callerId) => {
       payload: {
         date,
         name,
-        description,
         createdBy: callerId
       }
     });
