@@ -5,7 +5,10 @@ import forge from 'node-forge';
 // CONSTANTS & CONFIGURATION
 // ============================================
 
-// Check-in time restriction removed - employees can check in anytime
+// Check-in blocked after 9:05 AM IST
+const CHECKIN_CUTOFF_HOUR = 9;
+const CHECKIN_CUTOFF_MINUTE = 5;
+
 const CHECKOUT_BLOCK_START_HOUR = 16; // 4:00 PM
 const CHECKOUT_BLOCK_END_HOUR = 17; // 5:25 PM
 const CHECKOUT_BLOCK_END_MINUTE = 25;
@@ -70,10 +73,19 @@ const formatMonth = (date) => {
 };
 
 /**
- * Check if check-in is allowed (always allowed - time restriction removed)
+ * Check if check-in is allowed (before 9:05 AM IST only)
  */
 const isCheckInAllowed = () => {
-  return true;
+  const now = getNowIST();
+  const hour = now.getHours();
+  const minute = now.getMinutes();
+
+  // Before 9:05 AM - allowed
+  if (hour < CHECKIN_CUTOFF_HOUR) return true;
+  if (hour === CHECKIN_CUTOFF_HOUR && minute <= CHECKIN_CUTOFF_MINUTE) return true;
+
+  // After 9:05 AM - blocked
+  return false;
 };
 
 /**
@@ -310,6 +322,14 @@ const getActiveOfficeLocations = async (databases, dbId) => {
  * Handle check-in
  */
 const handleCheckIn = async (payload, databases, dbId) => {
+  // Validate time window - must be before 9:05 AM IST
+  if (!isCheckInAllowed()) {
+    return {
+      success: false,
+      message: 'Check-in not allowed after 9:05 AM'
+    };
+  }
+
   const { email, signature, dataToVerify, location } = payload;
 
   // Validate required fields
@@ -339,9 +359,9 @@ const handleCheckIn = async (payload, databases, dbId) => {
     return { success: false, message: 'Already checked in today' };
   }
 
-  // Validate location
+  // Validate location - REQUIRED and must be within office premises
   const officeLocations = await getActiveOfficeLocations(databases, dbId);
-  let locationResult = { valid: true, flagged: false };
+  let locationResult = { valid: false, flagged: true, reason: 'Location not provided' };
 
   if (location && location.latitude && location.longitude) {
     locationResult = validateGeofence(
@@ -350,8 +370,20 @@ const handleCheckIn = async (payload, databases, dbId) => {
       officeLocations,
       location.accuracy
     );
+
+    // Block if outside office premises
+    if (locationResult.flagged && locationResult.reason === 'Outside office premises') {
+      return {
+        success: false,
+        message: 'Check-in not allowed outside office premises'
+      };
+    }
   } else {
-    locationResult = { valid: true, flagged: true, reason: 'Location not provided' };
+    // Location is required for check-in
+    return {
+      success: false,
+      message: 'Location is required for check-in. Please enable GPS.'
+    };
   }
 
   // Create or update attendance record
