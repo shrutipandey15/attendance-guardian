@@ -961,6 +961,34 @@ const handleDeleteHoliday = async (payload, databases, dbId, callerId) => {
 };
 
 /**
+ * Handle get holidays (public - all authenticated users)
+ */
+const handleGetHolidays = async (databases, dbId) => {
+  // Get current year's holidays and next year's (for planning)
+  const currentYear = new Date().getFullYear();
+  const startDate = `${currentYear}-01-01`;
+  const endDate = `${currentYear + 1}-12-31`;
+
+  const result = await databases.listDocuments(dbId, 'holidays', [
+    Query.greaterThanEqual('date', startDate),
+    Query.lessThanEqual('date', endDate),
+    Query.orderAsc('date'),
+    Query.limit(100)
+  ]);
+
+  return {
+    success: true,
+    data: {
+      holidays: result.documents.map(h => ({
+        $id: h.$id,
+        date: h.date,
+        name: h.name
+      }))
+    }
+  };
+};
+
+/**
  * Handle add office location
  */
 const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
@@ -1722,6 +1750,9 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
 
       case 'get-system-info':
         return res.json(await handleGetSystemInfo());
+
+      case 'get-holidays':
+        return res.json(await handleGetHolidays(databases, DB_ID));
 
       // ============================================
       // UNKNOWN ACTION
