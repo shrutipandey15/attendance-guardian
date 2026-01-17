@@ -603,6 +603,29 @@ const handleGetMyAttendance = async (payload, databases, dbId, callerId) => {
   };
 };
 
+/**
+ * Handle reset my password (user resets their own password)
+ */
+const handleResetMyPassword = async (payload, users, callerId) => {
+  const { newPassword } = payload;
+
+  if (!newPassword) {
+    return { success: false, message: 'New password is required' };
+  }
+
+  if (newPassword.length < 8) {
+    return { success: false, message: 'Password must be at least 8 characters' };
+  }
+
+  try {
+    await users.updatePassword(callerId, newPassword);
+    return { success: true, message: 'Password updated successfully' };
+  } catch (error) {
+    console.error('Password reset error:', error);
+    return { success: false, message: error.message || 'Failed to reset password' };
+  }
+};
+
 // ============================================
 // ADMIN ACTION HANDLERS
 // ============================================
@@ -1599,6 +1622,9 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
 
       case 'get-my-attendance':
         return res.json(await handleGetMyAttendance(payload, databases, DB_ID, callerId));
+
+      case 'reset-my-password':
+        return res.json(await handleResetMyPassword(payload, users, callerId));
 
       // ============================================
       // ADMIN ACTIONS (Require admin check)
