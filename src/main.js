@@ -5,8 +5,8 @@ import forge from 'node-forge';
 // CONSTANTS & CONFIGURATION
 // ============================================
 
-// Check-in blocked after 9:05 AM IST
-const CHECKIN_CUTOFF_HOUR = 9;
+// Check-in blocked after 7:05 AM IST
+const CHECKIN_CUTOFF_HOUR = 7;
 const CHECKIN_CUTOFF_MINUTE = 5;
 
 const CHECKOUT_BLOCK_START_HOUR = 16; // 4:00 PM
@@ -80,11 +80,11 @@ const isCheckInAllowed = () => {
   const hour = now.getHours();
   const minute = now.getMinutes();
 
-  // Before 9:05 AM - allowed
+  // Before 7:05 AM - allowed
   if (hour < CHECKIN_CUTOFF_HOUR) return true;
   if (hour === CHECKIN_CUTOFF_HOUR && minute <= CHECKIN_CUTOFF_MINUTE) return true;
 
-  // After 9:05 AM - blocked
+  // After 7:05 AM - blocked
   return false;
 };
 
@@ -244,10 +244,11 @@ const createAuditLog = async (databases, dbId, data) => {
     signatureVerified = false
   } = data;
 
-  const hash = calculateHash({ actorId, action, targetId, payload, timestamp: new Date().toISOString() });
+  const timestamp = new Date().toISOString();
+  const hash = calculateHash({ actorId, action, targetId, payload, timestamp });
 
   await databases.createDocument(dbId, 'audit', ID.unique(), {
-    timestamp: new Date().toISOString(),
+    timestamp,
     actorId,
     action,
     targetId,
@@ -322,11 +323,11 @@ const getActiveOfficeLocations = async (databases, dbId) => {
  * Handle check-in
  */
 const handleCheckIn = async (payload, databases, dbId) => {
-  // Validate time window - must be before 9:05 AM IST
+  // Validate time window - must be before 7:05 AM IST
   if (!isCheckInAllowed()) {
     return {
       success: false,
-      message: 'Check-in not allowed after 9:05 AM'
+      message: 'Check-in not allowed after 7:05 AM'
     };
   }
 
@@ -345,6 +346,13 @@ const handleCheckIn = async (payload, databases, dbId) => {
     return { success: false, message: 'Device not registered. Please register first.' };
   }
 
+  // Bind signed payload to today + action so captured signatures can't be replayed
+  const today = formatDate(getNowIST());
+  const expectedData = `${email}|${today}|check-in`;
+  if (dataToVerify !== expectedData) {
+    return { success: false, message: 'Stale or invalid request. Please retry.' };
+  }
+
   // Verify signature
   const isValidSignature = verifySignature(employee.devicePublicKey, dataToVerify, signature);
   if (!isValidSignature) {
@@ -352,7 +360,6 @@ const handleCheckIn = async (payload, databases, dbId) => {
   }
 
   // Check if already checked in today
-  const today = formatDate(getNowIST());
   const existingAttendance = await getAttendanceByDate(databases, dbId, employee.$id, today);
 
   if (existingAttendance && existingAttendance.checkInTime) {
@@ -465,6 +472,13 @@ const handleCheckOut = async (payload, databases, dbId) => {
     return { success: false, message: 'Device not registered. Please register first.' };
   }
 
+  // Bind signed payload to today + action so captured signatures can't be replayed
+  const today = formatDate(getNowIST());
+  const expectedData = `${email}|${today}|check-out`;
+  if (dataToVerify !== expectedData) {
+    return { success: false, message: 'Stale or invalid request. Please retry.' };
+  }
+
   // Verify signature
   const isValidSignature = verifySignature(employee.devicePublicKey, dataToVerify, signature);
   if (!isValidSignature) {
@@ -472,7 +486,6 @@ const handleCheckOut = async (payload, databases, dbId) => {
   }
 
   // Check if checked in today
-  const today = formatDate(getNowIST());
   const attendance = await getAttendanceByDate(databases, dbId, employee.$id, today);
 
   if (!attendance || !attendance.checkInTime) {
@@ -531,15 +544,24 @@ const handleCheckOut = async (payload, databases, dbId) => {
 /**
  * Handle device registration
  */
-const handleRegisterDevice = async (payload, databases, dbId) => {
+const handleRegisterDevice = async (payload, databases, dbId, callerId) => {
   const { email, publicKey, deviceFingerprint } = payload;
 
   if (!email || !publicKey) {
     return { success: false, message: 'Email and public key required' };
   }
 
+  if (!callerId) {
+    return { success: false, message: 'Authentication required' };
+  }
+
   // Get employee
   const employee = await getEmployeeByEmail(databases, dbId, email);
+
+  // Caller must be registering their own account
+  if (employee.$id !== callerId) {
+    return { success: false, message: 'Cannot register device for another user' };
+  }
 
   // Check if device already registered
   if (employee.devicePublicKey) {
@@ -672,6 +694,15 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
     return { success: false, message: 'Name, email and password required' };
   }
 
+  let salaryValue = 8000;
+  if (salary !== undefined && salary !== null && salary !== '') {
+    const parsed = parseInt(salary);
+    if (isNaN(parsed) || parsed < 0) {
+      return { success: false, message: 'Salary must be a non-negative number' };
+    }
+    salaryValue = parsed;
+  }
+
   let newUser;
 
   try {
@@ -681,7 +712,7 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
       name,
       email,
       role: 'employee',
-      salaryMonthly: parseInt(salary) || 8000,
+      salaryMonthly: salaryValue,
       joinDate: joinDate || new Date().toISOString(),
       isActive: true
     });
@@ -694,7 +725,7 @@ const handleCreateEmployee = async (payload, databases, users, dbId, callerId) =
       payload: {
         employeeName: name,
         email,
-        salary: parseInt(salary) || 8000,
+        salary: salaryValue,
         createdBy: callerId
       }
     });
@@ -918,7 +949,7 @@ const handleCreateHoliday = async (payload, databases, dbId, callerId) => {
       }
     };
   } catch (err) {
-    if (err.message.includes('unique')) {
+    if (err.code === 409 || err.type === 'document_already_exists') {
       return { success: false, message: 'Holiday already exists for this date' };
     }
     throw err;
@@ -1017,6 +1048,302 @@ const handleAddOfficeLocation = async (payload, databases, dbId, callerId) => {
 };
 
 // ============================================
+// LEAVE MANAGEMENT
+// ============================================
+
+const handleCreateLeave = async (payload, databases, dbId) => {
+  const { employeeId, date, type, reason } = payload;
+  if (!employeeId || !date || !type) {
+    return { success: false, message: 'employeeId, date and type required' };
+  }
+
+  await getEmployee(databases, dbId, employeeId);
+
+  const leave = await databases.createDocument(dbId, 'leaves', ID.unique(), {
+    employeeId,
+    date,
+    type,
+    reason: reason || '',
+    status: 'pending',
+    requestedAt: new Date().toISOString()
+  });
+
+  return { success: true, message: 'Leave request created', data: { leaveId: leave.$id } };
+};
+
+const handleListLeaves = async (payload, databases, dbId) => {
+  const { employeeId, status, month } = payload;
+  const queries = [Query.limit(200), Query.orderDesc('date')];
+  if (employeeId) queries.push(Query.equal('employeeId', employeeId));
+  if (status) queries.push(Query.equal('status', status));
+  if (month) {
+    queries.push(Query.greaterThanEqual('date', month + '-01'));
+    queries.push(Query.lessThan('date', month + '-32'));
+  }
+
+  const result = await databases.listDocuments(dbId, 'leaves', queries);
+  return { success: true, data: { leaves: result.documents } };
+};
+
+const handleDecideLeave = async (payload, databases, dbId, callerId, decision) => {
+  const { leaveId, comment } = payload;
+  if (!leaveId) return { success: false, message: 'leaveId required' };
+
+  const leave = await databases.getDocument(dbId, 'leaves', leaveId);
+  if (leave.status !== 'pending') {
+    return { success: false, message: `Leave already ${leave.status}` };
+  }
+
+  await databases.updateDocument(dbId, 'leaves', leaveId, {
+    status: decision,
+    reviewedBy: callerId,
+    reviewedAt: new Date().toISOString(),
+    reviewNotes: comment || ''
+  });
+
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: `leave-${decision}`,
+    targetId: leaveId,
+    targetType: 'leave',
+    payload: { employeeId: leave.employeeId, date: leave.date, comment }
+  });
+
+  return { success: true, message: `Leave ${decision}` };
+};
+
+// ============================================
+// OFFICE LOCATIONS CRUD
+// ============================================
+
+const handleListOfficeLocations = async (databases, dbId) => {
+  const result = await databases.listDocuments(dbId, 'office_locations', [Query.limit(100)]);
+  return { success: true, data: { locations: result.documents } };
+};
+
+const handleUpdateOfficeLocation = async (payload, databases, dbId) => {
+  const { locationId, data } = payload;
+  if (!locationId || !data) return { success: false, message: 'locationId and data required' };
+
+  const updates = {};
+  if (data.name) updates.name = data.name;
+  if (data.latitude !== undefined) updates.latitude = data.latitude;
+  if (data.longitude !== undefined) updates.longitude = data.longitude;
+  if (data.radiusMeters !== undefined) updates.radiusMeters = data.radiusMeters;
+  if (data.isActive !== undefined) updates.isActive = data.isActive;
+
+  await databases.updateDocument(dbId, 'office_locations', locationId, updates);
+  return { success: true, message: 'Office location updated' };
+};
+
+const handleDeleteOfficeLocation = async (payload, databases, dbId) => {
+  const { locationId } = payload;
+  if (!locationId) return { success: false, message: 'locationId required' };
+
+  await databases.deleteDocument(dbId, 'office_locations', locationId);
+  return { success: true, message: 'Office location deleted' };
+};
+
+// ============================================
+// AUDIT LOG VIEWER
+// ============================================
+
+const handleListAuditLogs = async (payload, databases, dbId) => {
+  const { actorId, action, targetType, startDate, endDate, limit } = payload;
+  const queries = [Query.orderDesc('timestamp'), Query.limit(Math.min(limit || 100, 500))];
+  if (actorId) queries.push(Query.equal('actorId', actorId));
+  if (action) queries.push(Query.equal('action', action));
+  if (targetType) queries.push(Query.equal('targetType', targetType));
+  if (startDate) queries.push(Query.greaterThanEqual('timestamp', startDate));
+  if (endDate) queries.push(Query.lessThanEqual('timestamp', endDate));
+
+  const result = await databases.listDocuments(dbId, 'audit', queries);
+  return { success: true, data: { logs: result.documents, total: result.total } };
+};
+
+// ============================================
+// ADMIN PASSWORD RESET
+// ============================================
+
+const handleAdminResetPassword = async (payload, databases, users, dbId, callerId) => {
+  const { employeeId, newPassword } = payload;
+  if (!employeeId || !newPassword) {
+    return { success: false, message: 'employeeId and newPassword required' };
+  }
+  if (newPassword.length < 8) {
+    return { success: false, message: 'Password must be at least 8 characters' };
+  }
+
+  await users.updatePassword(employeeId, newPassword);
+
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: 'admin-password-reset',
+    targetId: employeeId,
+    targetType: 'employee',
+    payload: { resetBy: callerId }
+  });
+
+  return { success: true, message: 'Password reset successfully' };
+};
+
+// ============================================
+// EMPLOYEE TERMINATION (graceful soft-delete)
+// ============================================
+
+const handleTerminateEmployee = async (payload, databases, dbId, callerId) => {
+  const { employeeId, terminationDate, reason } = payload;
+  if (!employeeId || !reason) {
+    return { success: false, message: 'employeeId and reason required' };
+  }
+
+  const employee = await getEmployee(databases, dbId, employeeId);
+  if (!employee.isActive) {
+    return { success: false, message: 'Employee already terminated' };
+  }
+
+  const effectiveDate = terminationDate || formatDate(getNowIST());
+
+  await databases.updateDocument(dbId, 'employees', employeeId, {
+    isActive: false,
+    terminationDate: effectiveDate,
+    devicePublicKey: null,
+    deviceFingerprint: null
+  });
+
+  const month = effectiveDate.substring(0, 7);
+  const payrollList = await databases.listDocuments(dbId, 'payroll', [
+    Query.equal('employeeId', employeeId),
+    Query.equal('month', month),
+    Query.limit(1)
+  ]);
+
+  if (payrollList.total > 0 && !payrollList.documents[0].isLocked) {
+    const payrollDoc = payrollList.documents[0];
+    const termDay = parseInt(effectiveDate.split('-')[2]);
+    const attendanceList = await databases.listDocuments(dbId, 'attendance', [
+      Query.equal('employeeId', employeeId),
+      Query.greaterThan('date', effectiveDate),
+      Query.lessThan('date', month + '-32'),
+      Query.limit(100)
+    ]);
+
+    let presentDays = payrollDoc.presentDays;
+    let halfDays = payrollDoc.halfDays;
+    let absentDays = payrollDoc.absentDays;
+    let sundayDays = payrollDoc.sundayDays;
+    let holidayDays = payrollDoc.holidayDays;
+    let leaveDays = payrollDoc.leaveDays;
+
+    for (const att of attendanceList.documents) {
+      switch (att.status) {
+        case 'present': presentDays--; break;
+        case 'half_day': halfDays--; break;
+        case 'absent': absentDays--; break;
+        case 'sunday': sundayDays--; break;
+        case 'holiday': holidayDays--; break;
+        case 'leave': leaveDays--; break;
+      }
+      await databases.deleteDocument(dbId, 'attendance', att.$id);
+    }
+
+    const paidDays = presentDays + sundayDays + holidayDays + leaveDays + (halfDays * 0.5);
+    await databases.updateDocument(dbId, 'payroll', payrollDoc.$id, {
+      presentDays: Math.max(0, presentDays),
+      halfDays: Math.max(0, halfDays),
+      absentDays: Math.max(0, absentDays),
+      sundayDays: Math.max(0, sundayDays),
+      holidayDays: Math.max(0, holidayDays),
+      leaveDays: Math.max(0, leaveDays),
+      totalWorkingDays: termDay,
+      netSalary: payrollDoc.dailyRate * paidDays
+    });
+  }
+
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: AUDIT_ACTIONS.EMPLOYEE_DEACTIVATED,
+    targetId: employeeId,
+    targetType: 'employee',
+    payload: { employeeName: employee.name, terminationDate: effectiveDate, reason }
+  });
+
+  return { success: true, message: 'Employee terminated', data: { terminationDate: effectiveDate } };
+};
+
+/**
+ * Handle delete all non-admin users
+ * Deletes auth users + their employee docs for everyone NOT in the admin team.
+ */
+const handleDeleteNonAdminUsers = async (databases, users, teams, dbId, adminTeamId, callerId) => {
+  if (!adminTeamId) {
+    return { success: false, message: 'Admin team not configured' };
+  }
+
+  const adminIds = new Set();
+  let offset = 0;
+  while (true) {
+    const memberships = await teams.listMemberships(adminTeamId, [
+      Query.limit(100),
+      Query.offset(offset)
+    ]);
+    memberships.memberships.forEach(m => adminIds.add(m.userId));
+    if (memberships.memberships.length < 100) break;
+    offset += 100;
+  }
+
+  let deletedAuth = 0;
+  let deletedEmployees = 0;
+  const failures = [];
+
+  let cursor = null;
+  while (true) {
+    const queries = [Query.limit(100), Query.orderAsc('$id')];
+    if (cursor) queries.push(Query.cursorAfter(cursor));
+    const userList = await users.list(queries);
+    if (userList.users.length === 0) break;
+
+    for (const u of userList.users) {
+      if (adminIds.has(u.$id)) continue;
+      if (u.$id === callerId) continue;
+
+      try {
+        await databases.deleteDocument(dbId, 'employees', u.$id);
+        deletedEmployees++;
+      } catch (err) {
+        if (!String(err.message).toLowerCase().includes('not found')) {
+          failures.push({ id: u.$id, stage: 'employee-doc', error: err.message });
+        }
+      }
+
+      try {
+        await users.delete(u.$id);
+        deletedAuth++;
+      } catch (err) {
+        failures.push({ id: u.$id, stage: 'auth-user', error: err.message });
+      }
+    }
+
+    if (userList.users.length < 100) break;
+    cursor = userList.users[userList.users.length - 1].$id;
+  }
+
+  await createAuditLog(databases, dbId, {
+    actorId: callerId,
+    action: 'non-admin-users-deleted',
+    targetId: null,
+    targetType: 'user',
+    payload: { deletedAuth, deletedEmployees, failures: failures.length }
+  });
+
+  return {
+    success: true,
+    message: `Deleted ${deletedAuth} users and ${deletedEmployees} employee records`,
+    data: { deletedAuth, deletedEmployees, failures }
+  };
+};
+
+// ============================================
 // PAYROLL HANDLERS
 // ============================================
 
@@ -1064,7 +1391,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
   const daysInMonth = new Date(parseInt(year), parseInt(monthNum), 0).getDate();
   const now = getNowIST();
   const isCurrentMonth = (now.getMonth() + 1) === parseInt(monthNum) && now.getFullYear() === parseInt(year);
-  const lastBillableDay = isCurrentMonth ? now.getDate() : daysInMonth;
+  let lastBillableDay = isCurrentMonth ? now.getDate() : daysInMonth;
 
   let totalPayout = 0;
   const payrollRecords = [];
@@ -1095,6 +1422,17 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     
     if (employeeJoinDate > monthEndDate) continue;
 
+    let employeeLastDay = lastBillableDay;
+    if (employee.terminationDate) {
+      const termDate = new Date(employee.terminationDate);
+      if (!isNaN(termDate.getTime())) {
+        if (termDate < monthStartDate) continue;
+        if (termDate <= monthEndDate) {
+          employeeLastDay = Math.min(employeeLastDay, termDate.getDate());
+        }
+      }
+    }
+
     const firstWorkingDay = employeeJoinDate > monthStartDate ? employeeJoinDate.getDate() : 1;
     const attendanceResult = await databases.listDocuments(dbId, 'attendance', [
       Query.equal('employeeId', employee.$id),
@@ -1112,7 +1450,7 @@ const handleGeneratePayroll = async (payload, databases, dbId, callerId) => {
     const missingRecordsToCreate = [];
 
     for (let day = 1; day <= daysInMonth; day++) {
-       if (day > lastBillableDay) break;
+       if (day > employeeLastDay) break;
 
        if (day < firstWorkingDay) continue;
 
@@ -1572,7 +1910,13 @@ const handleUpdateEmployee = async (payload, databases, dbId, callerId) => {
   const updates = {};
   if (data.name) updates.name = data.name;
   if (data.email) updates.email = data.email;
-  if (data.salary) updates.salaryMonthly = parseInt(data.salary);
+  if (data.salary !== undefined && data.salary !== null && data.salary !== '') {
+    const parsed = parseInt(data.salary);
+    if (isNaN(parsed) || parsed < 0) {
+      return { success: false, message: 'Salary must be a non-negative number' };
+    }
+    updates.salaryMonthly = parsed;
+  }
   if (data.joinDate) updates.joinDate = data.joinDate;
   if (data.isActive !== undefined) updates.isActive = data.isActive;
 
@@ -1676,7 +2020,7 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
         return res.json(await handleCheckOut(payload, databases, DB_ID));
 
       case 'register-device':
-        return res.json(await handleRegisterDevice(payload, databases, DB_ID));
+        return res.json(await handleRegisterDevice(payload, databases, DB_ID, callerId));
 
       case 'get-my-attendance':
         return res.json(await handleGetMyAttendance(payload, databases, DB_ID, callerId));
@@ -1719,6 +2063,50 @@ export default async ({ req, res, log, error, _mockDatabases, _mockUsers, _mockT
       case 'update-employee':
         await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
         return res.json(await handleUpdateEmployee(payload, databases, DB_ID, callerId));
+
+      case 'delete-non-admin-users':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleDeleteNonAdminUsers(databases, users, teams, DB_ID, ADMIN_TEAM_ID, callerId));
+
+      case 'terminate-employee':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleTerminateEmployee(payload, databases, DB_ID, callerId));
+
+      case 'admin-reset-password':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleAdminResetPassword(payload, databases, users, DB_ID, callerId));
+
+      case 'create-leave':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleCreateLeave(payload, databases, DB_ID));
+
+      case 'list-leaves':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleListLeaves(payload, databases, DB_ID));
+
+      case 'approve-leave':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleDecideLeave(payload, databases, DB_ID, callerId, 'approved'));
+
+      case 'reject-leave':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleDecideLeave(payload, databases, DB_ID, callerId, 'rejected'));
+
+      case 'list-office-locations':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleListOfficeLocations(databases, DB_ID));
+
+      case 'update-office-location':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleUpdateOfficeLocation(payload, databases, DB_ID));
+
+      case 'delete-office-location':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleDeleteOfficeLocation(payload, databases, DB_ID));
+
+      case 'list-audit-logs':
+        await checkAdmin(callerId, teams, ADMIN_TEAM_ID);
+        return res.json(await handleListAuditLogs(payload, databases, DB_ID));
 
       // ============================================
       // PAYROLL ACTIONS (Admin only)

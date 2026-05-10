@@ -131,9 +131,9 @@ describe('Check-In Logic', () => {
         vi.useRealTimers();
     });
 
-    it('Should ALLOW check-in at 9:00 AM IST', async () => {
-        // 9:00 AM IST = 3:30 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T03:30:00Z'));
+    it('Should ALLOW check-in at 7:00 AM IST', async () => {
+        // 7:00 AM IST = 1:30 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T01:30:00Z'));
 
         // Mock different responses for different collections
         mockListDocuments.mockImplementation((dbId, collection) => {
@@ -164,7 +164,7 @@ describe('Check-In Logic', () => {
             action: 'check-in',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data',
+            dataToVerify: 'john@example.com|2024-01-15|check-in',
             location: { latitude: 12.9716, longitude: 77.5946, accuracy: 10 }
         });
 
@@ -183,44 +183,59 @@ describe('Check-In Logic', () => {
         });
     });
 
-    it('Should ALLOW check-in at 9:05 AM IST (last minute)', async () => {
-        // 9:05 AM IST = 3:35 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T03:35:00Z'));
+    it('Should ALLOW check-in at 7:05 AM IST (last minute)', async () => {
+        // 7:05 AM IST = 1:35 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T01:35:00Z'));
 
-        const { result } = await run({
-            action: 'check-in',
-            email: 'john@example.com',
-            signature: 'valid-signature',
-            dataToVerify: 'test-data'
+        mockListDocuments.mockImplementation((dbId, collection) => {
+            if (collection === 'employees') {
+                return Promise.resolve({
+                    total: 1,
+                    documents: [{
+                        $id: 'emp-123',
+                        email: 'john@example.com',
+                        devicePublicKey: 'valid-key'
+                    }]
+                });
+            }
+            return Promise.resolve({ total: 0, documents: [] });
         });
 
-        expect(result.success).toBe(true);
-    });
-
-    it('Should ALLOW check-in at 9:06 AM IST (time restriction removed)', async () => {
-        // 9:06 AM IST = 3:36 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T03:36:00Z'));
-
         const { result } = await run({
             action: 'check-in',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data',
+            dataToVerify: 'john@example.com|2024-01-15|check-in',
             location: { latitude: 12.9716, longitude: 77.5946, accuracy: 10 }
         });
 
         expect(result.success).toBe(true);
-        expect(result.message).toContain('Check-in recorded successfully');
+    });
+
+    it('Should REJECT check-in at 7:06 AM IST (after cutoff)', async () => {
+        // 7:06 AM IST = 1:36 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T01:36:00Z'));
+
+        const { result } = await run({
+            action: 'check-in',
+            email: 'john@example.com',
+            signature: 'valid-signature',
+            dataToVerify: 'john@example.com|2024-01-15|check-in',
+            location: { latitude: 12.9716, longitude: 77.5946, accuracy: 10 }
+        });
+
+        expect(result.success).toBe(false);
+        expect(result.message).toContain('not allowed after 7:05');
     });
 
     it('Should reject check-in with invalid signature', async () => {
-        vi.setSystemTime(new Date('2024-01-15T03:30:00Z'));
+        vi.setSystemTime(new Date('2024-01-15T01:30:00Z'));
 
         const { result } = await run({
             action: 'check-in',
             email: 'john@example.com',
             signature: 'invalid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-in'
         });
 
         expect(result.success).toBe(false);
@@ -228,7 +243,7 @@ describe('Check-In Logic', () => {
     });
 
     it('Should reject check-in if device not registered', async () => {
-        vi.setSystemTime(new Date('2024-01-15T03:30:00Z'));
+        vi.setSystemTime(new Date('2024-01-15T01:30:00Z'));
 
         mockListDocuments.mockResolvedValue({
             total: 1,
@@ -243,7 +258,7 @@ describe('Check-In Logic', () => {
             action: 'check-in',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-in'
         });
 
         expect(result.success).toBe(false);
@@ -251,7 +266,7 @@ describe('Check-In Logic', () => {
     });
 
     it('Should reject duplicate check-in for same day', async () => {
-        vi.setSystemTime(new Date('2024-01-15T03:30:00Z'));
+        vi.setSystemTime(new Date('2024-01-15T01:30:00Z'));
 
         // Mock existing attendance
         mockListDocuments.mockImplementation((dbId, collection, queries) => {
@@ -278,7 +293,7 @@ describe('Check-In Logic', () => {
             action: 'check-in',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-in'
         });
 
         expect(result.success).toBe(false);
@@ -316,7 +331,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(false);
@@ -332,7 +347,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(false);
@@ -370,7 +385,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(true);
@@ -406,7 +421,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(true);
@@ -442,7 +457,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(true);
@@ -478,7 +493,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(true);
@@ -506,7 +521,7 @@ describe('Check-Out Logic', () => {
             action: 'check-out',
             email: 'john@example.com',
             signature: 'valid-signature',
-            dataToVerify: 'test-data'
+            dataToVerify: 'john@example.com|2024-01-15|check-out'
         });
 
         expect(result.success).toBe(false);
@@ -537,7 +552,7 @@ describe('Device Registration', () => {
             email: 'john@example.com',
             publicKey: '-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----',
             deviceFingerprint: 'Mozilla/5.0'
-        });
+        }, { userId: 'emp-123' });
 
         expect(result.success).toBe(true);
         expect(result.message).toContain('Device registered successfully');
@@ -566,7 +581,7 @@ describe('Device Registration', () => {
             action: 'register-device',
             email: 'john@example.com',
             publicKey: '-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----'
-        });
+        }, { userId: 'emp-123' });
 
         expect(result.success).toBe(false);
         expect(result.message).toContain('already registered');
@@ -586,7 +601,7 @@ describe('Device Registration', () => {
             action: 'register-device',
             email: 'john@example.com',
             publicKey: 'invalid'
-        });
+        }, { userId: 'emp-123' });
 
         expect(result.success).toBe(false);
         expect(result.message).toContain('Invalid key format');
@@ -729,7 +744,7 @@ describe('System Info', () => {
     });
 
     it('Should return system info', async () => {
-        vi.setSystemTime(new Date('2024-01-15T03:30:00Z')); // 9:00 AM IST
+        vi.setSystemTime(new Date('2024-01-15T01:30:00Z')); // 7:00 AM IST
 
         const { result } = await run({ action: 'get-system-info' });
 
