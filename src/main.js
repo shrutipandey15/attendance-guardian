@@ -9,8 +9,8 @@ import forge from 'node-forge';
 const CHECKIN_CUTOFF_HOUR = 7;
 const CHECKIN_CUTOFF_MINUTE = 5;
 
-const CHECKOUT_BLOCK_START_HOUR = 16; // 4:00 PM
-const CHECKOUT_BLOCK_END_HOUR = 17; // 5:25 PM
+const CHECKOUT_BLOCK_START_HOUR = 14; // 2:00 PM
+const CHECKOUT_BLOCK_END_HOUR = 15; // 3:25 PM
 const CHECKOUT_BLOCK_END_MINUTE = 25;
 
 const ATTENDANCE_STATUS = {
@@ -89,21 +89,21 @@ const isCheckInAllowed = () => {
 };
 
 /**
- * Check if check-out is allowed (NOT between 4:00 PM - 5:25 PM IST)
+ * Check if check-out is allowed (NOT between 2:00 PM - 3:25 PM IST)
  */
 const isCheckOutAllowed = () => {
   const now = getNowIST();
   const hour = now.getHours();
   const minute = now.getMinutes();
 
-  // Before 4:00 PM - allowed
+  // Before 2:00 PM - allowed
   if (hour < CHECKOUT_BLOCK_START_HOUR) return true;
 
-  // After 5:25 PM - allowed
+  // After 3:25 PM - allowed
   if (hour > CHECKOUT_BLOCK_END_HOUR) return true;
   if (hour === CHECKOUT_BLOCK_END_HOUR && minute > CHECKOUT_BLOCK_END_MINUTE) return true;
 
-  // Between 4:00 PM and 5:25 PM - blocked
+  // Between 2:00 PM and 3:25 PM - blocked
   return false;
 };
 
@@ -453,7 +453,7 @@ const handleCheckOut = async (payload, databases, dbId) => {
   if (!isCheckOutAllowed()) {
     return {
       success: false,
-      message: 'Check-out unavailable between 4:00-5:25 PM'
+      message: 'Check-out unavailable between 2:00-3:25 PM'
     };
   }
 

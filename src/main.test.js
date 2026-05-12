@@ -323,9 +323,9 @@ describe('Check-Out Logic', () => {
         vi.useRealTimers();
     });
 
-    it('Should BLOCK check-out at 4:00 PM IST', async () => {
-        // 4:00 PM IST = 10:30 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T10:30:00Z'));
+    it('Should BLOCK check-out at 2:00 PM IST', async () => {
+        // 2:00 PM IST = 8:30 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T08:30:00Z'));
 
         const { result } = await run({
             action: 'check-out',
@@ -336,12 +336,12 @@ describe('Check-Out Logic', () => {
 
         expect(result.success).toBe(false);
         expect(result.message).toContain('Check-out unavailable');
-        expect(result.message).toContain('4:00-5:25');
+        expect(result.message).toContain('2:00-3:25');
     });
 
-    it('Should BLOCK check-out at 5:00 PM IST', async () => {
-        // 5:00 PM IST = 11:30 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T11:30:00Z'));
+    it('Should BLOCK check-out at 3:00 PM IST', async () => {
+        // 3:00 PM IST = 9:30 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T09:30:00Z'));
 
         const { result } = await run({
             action: 'check-out',
@@ -354,9 +354,9 @@ describe('Check-Out Logic', () => {
         expect(result.message).toContain('Check-out unavailable');
     });
 
-    it('Should ALLOW check-out at 5:26 PM IST', async () => {
-        // 5:26 PM IST = 11:56 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T11:56:00Z'));
+    it('Should ALLOW check-out at 3:26 PM IST', async () => {
+        // 3:26 PM IST = 9:56 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T09:56:00Z'));
 
         mockListDocuments.mockImplementation((dbId, collection) => {
             if (collection === 'attendance') {
@@ -428,9 +428,9 @@ describe('Check-Out Logic', () => {
         expect(result.data.status).toBe('absent');
     });
 
-    it('Should calculate HALF_DAY if checkout between 12 PM - 3:59 PM', async () => {
-        // 2:00 PM IST = 8:30 AM UTC
-        vi.setSystemTime(new Date('2024-01-15T08:30:00Z'));
+    it('Should calculate HALF_DAY if checkout between 12 PM - 2:00 PM', async () => {
+        // 1:00 PM IST = 7:30 AM UTC
+        vi.setSystemTime(new Date('2024-01-15T07:30:00Z'));
 
         mockListDocuments.mockImplementation((dbId, collection) => {
             if (collection === 'attendance') {
@@ -464,7 +464,7 @@ describe('Check-Out Logic', () => {
         expect(result.data.status).toBe('half_day');
     });
 
-    it('Should calculate PRESENT if checkout at 4:00 PM or later', async () => {
+    it('Should calculate PRESENT if checkout after 3:25 PM', async () => {
         // 6:00 PM IST = 12:30 PM UTC
         vi.setSystemTime(new Date('2024-01-15T12:30:00Z'));
 
